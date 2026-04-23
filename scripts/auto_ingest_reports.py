@@ -10,9 +10,7 @@ from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
 
-# THÊM MỚI: Import công cụ nạp dữ liệu vào ChromaDB
 import sys
-# Lùi ra thư mục gốc để import được thư mục tools
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tools.rag_tools import ingest_text 
 
@@ -21,7 +19,6 @@ BASE_DIR = os.path.dirname(SCRIPT_DIR)
 TEMP_DIR = os.path.join(BASE_DIR, "temp_reports")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-# Danh sách 40 mã cổ phiếu trọng điểm
 VN_TICKERS = [
     "VNM", "VIC", "VHM", "VRE", "HPG", "TCB", "VPB", "MBB", "BID", "CTG",
     "VCB", "FPT", "MSN", "MWG", "GVR", "SAB", "PLX", "GAS", "POW", "PVD",
@@ -62,20 +59,18 @@ def crawl_bctc_to_markdown(ticker: str):
                 so_lieu = " | ".join(row_data[1:])
                 markdown_content += f"- **{chi_tieu}**: {so_lieu}\n"
                 
-        # Lưu ra file Text (Để lưu trữ local)
         file_path = os.path.join(TEMP_DIR, f"{ticker}_BCTC_Table.txt")
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(markdown_content)
             
         print(f"  ✅ Đã lưu Text: {file_path}")
         
-        # BƯỚC QUAN TRỌNG NHẤT: Bơm dữ liệu vào Vector DB
         print(f"  🧠 Đang nạp dữ liệu vào Vector DB (Chroma)...")
         chunks = ingest_text(
             text=markdown_content, 
             ticker=ticker, 
             source=f"CafeF_KQKD_{ticker}.txt", 
-            report_type="financial" # Bắt buộc phải là financial để RAG Agent tìm thấy
+            report_type="financial"
         )
         if chunks > 0:
             print(f"  ✅ Đã nạp thành công {chunks} đoạn văn bản cho {ticker}!")

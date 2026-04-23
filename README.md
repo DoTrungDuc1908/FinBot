@@ -82,3 +82,4 @@ Hệ thống được thiết kế dựa trên ba tiêu chí tối ưu hóa cố
 2. Các bước triển khai:
 Kéo mã nguồn từ kho lưu trữ, thiết lập biến môi trường và khởi chạy các container thông qua Docker Compose. Môi trường phát triển bao gồm các dịch vụ cơ sở dữ liệu và ứng dụng.
 
+<video controls src="demo.mp4" title="Video demo kết quả"></video>

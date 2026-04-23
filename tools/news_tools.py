@@ -22,10 +22,9 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from config.settings import settings
 from core.cache import cache, CacheClient
-from core.llm import get_fast_llm  # Sử dụng Fast LLM để chấm điểm nhanh
+from core.llm import get_fast_llm
 
 
-# ── 1. Định nghĩa Pydantic Schema cho LLM (THÊM MỚI) ──────────────────────────
 
 class ArticleSentiment(BaseModel):
     article_id: int = Field(description="ID của bài báo trong danh sách cung cấp")
@@ -36,7 +35,6 @@ class BatchSentimentResponse(BaseModel):
     results: List[ArticleSentiment] = Field(description="Danh sách kết quả phân tích sentiment cho toàn bộ bài báo")
 
 
-# ── 2. Các hàm Cào dữ liệu (Giữ nguyên logic) ─────────────────────────────────
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 def _fetch_rss_content(url: str) -> bytes:
@@ -87,7 +85,6 @@ def _search_news_for_ticker(ticker: str, limit: int = 5) -> List[dict]:
         return []
 
 
-# ── 3. Phân tích Sentiment bằng LLM (THAY THẾ HOÀN TOÀN TỪ KHÓA) ──────────────
 
 def _aggregate_sentiment_with_llm(articles: List[dict]) -> dict:
     """Sử dụng LLM để đọc và chấm điểm sentiment bằng Manual JSON Parsing."""
@@ -128,7 +125,6 @@ Danh sách bài báo:
         
         sentiment_map = {}
         
-        # 1. Thử bóc tách JSON bằng Regex
         match = re.search(r'\{.*\}', raw_output, re.DOTALL)
         
         if match:
@@ -138,7 +134,6 @@ Danh sách bài báo:
                 if "article_id" in item:
                     sentiment_map[item["article_id"]] = item
         else:
-            # 2. LỚP PHÒNG VỆ MỚI: Xử lý khi LLM cứng đầu trả về Text
             logger.warning("Không tìm thấy JSON, kích hoạt đọc hiểu Text thuần từ LLM.")
             text_lower = raw_output.lower()
             
@@ -160,7 +155,6 @@ Danh sách bài báo:
         logger.error(f"Lỗi phân giải JSON Sentiment: {e}. Raw Output: {raw_output}")
         sentiment_map = {}
 
-    # --- PHẦN TÍNH ĐIỂM VÀ RETURN ---
     counts = {"positive": 0, "negative": 0, "neutral": 0}
     scores = []
 
@@ -190,7 +184,6 @@ Danh sách bài báo:
     }
 
 
-# ── 4. LangChain Tools ────────────────────────────────────────────────────────
 
 @tool
 def fetch_stock_news(ticker: str, limit: int = 10) -> str:
@@ -215,7 +208,7 @@ def fetch_stock_news(ticker: str, limit: int = 10) -> str:
 @tool
 def analyze_stock_sentiment(ticker: str, start_date: str = None, end_date: str = None) -> str:
     """Phân tích sentiment tin tức bằng LLM, có hỗ trợ lọc theo ngày. Trả về JSON chứa Markdown và Dữ liệu thô."""
-    import json # Đảm bảo import json
+    import json
     try:
         articles = _search_news_for_ticker(ticker, limit=50)
         
@@ -234,10 +227,8 @@ def analyze_stock_sentiment(ticker: str, start_date: str = None, end_date: str =
         else:
             articles = articles[:15]
 
-        # Gọi hàm aggregate bằng LLM
         agg = _aggregate_sentiment_with_llm(articles)
 
-        # 1. Build Markdown báo cáo cho LLM (Advisor Agent) đọc
         md = f"### 📰 Báo cáo Tin tức & Tâm lý: **{ticker.upper()}**\n"
         if start_date: md += f"*(Giai đoạn: {start_date} đến {end_date})*\n\n"
         
@@ -259,7 +250,6 @@ def analyze_stock_sentiment(ticker: str, start_date: str = None, end_date: str =
             else:
                 md += "\n"
 
-        # 2. THAY ĐỔI QUAN TRỌNG: Đóng gói JSON trả về
         result_payload = {
             "markdown_report": md,
             "raw_data": {
@@ -271,7 +261,7 @@ def analyze_stock_sentiment(ticker: str, start_date: str = None, end_date: str =
                     "neg": agg['negative'], 
                     "neu": agg['neutral']
                 },
-                "articles": articles[:10] # Chỉ lấy tối đa 10 bài báo trả về cho Frontend hiển thị UI
+                "articles": articles[:10]
             }
         }
         
@@ -279,7 +269,6 @@ def analyze_stock_sentiment(ticker: str, start_date: str = None, end_date: str =
         
     except Exception as e:
         logger.exception(f"Lỗi Tool analyze_stock_sentiment cho {ticker}:")
-        # Đảm bảo format lỗi cũng tuân thủ cấu trúc JSON
         error_payload = {
             "markdown_report": f"⚠️ Lỗi phân tích tâm lý: {str(e)}",
             "raw_data": None
@@ -298,7 +287,6 @@ def get_market_news(limit: int = 15) -> str:
         articles.extend(_parse_rss_feed(settings.vneconomy_rss, limit=limit))
         articles = articles[:limit]
         
-        # Đánh giá bằng LLM
         agg = _aggregate_sentiment_with_llm(articles)
 
         result = {

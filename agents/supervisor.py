@@ -13,7 +13,7 @@ import json
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.output_parsers import JsonOutputParser # Thêm import này
+from langchain_core.output_parsers import JsonOutputParser
 from langgraph.graph import StateGraph, END
 from loguru import logger
 
@@ -25,13 +25,11 @@ from agents.sentiment_agent import run_sentiment_agent
 from agents.report_rag_agent import run_report_rag_agent
 from agents.advisor_agent import synthesize_investment_advice
 
-# ── 1. Định nghĩa Schema cho Structured Output (THÊM MỚI) ─────────────────────
 class IntentClassification(BaseModel):
     selected_agents: List[str] = Field(
         description="Danh sách các agent cần gọi. Các giá trị hợp lệ bắt buộc lấy từ: stock_info, technical, sentiment, report_rag, advisor, market"
     )
 
-# ── Intent labels & Prompts ───────────────────────────────────────────────────
 INTENTS = {
     "stock_info": "Thông tin công ty, giá cổ phiếu, lịch sử giá, OHLCV, volume, sàn, vốn hóa",
     "technical": "Phân tích kỹ thuật, SMA, RSI, MACD, Bollinger Bands, xu hướng, tín hiệu kỹ thuật",
@@ -79,7 +77,6 @@ def extract_risk_profile(text: str) -> str:
     if any(k in text_lower for k in ["cao", "rủi ro cao", "tích cực", "mạo hiểm"]): return "cao"
     return "trung bình"
 
-# ── LangGraph State ───────────────────────────────────────────────────────────
 
 class SupervisorState(TypedDict):
     question: str
@@ -95,10 +92,9 @@ class SupervisorState(TypedDict):
     start_date: str | None
     end_date: str | None
     interval: str
-    news_metadata: dict  # Thêm trường này
+    news_metadata: dict
 
 
-# ── Graph Nodes (Đã Cập Nhật) ─────────────────────────────────────────────────
 
 def classify_node(state: SupervisorState) -> SupervisorState:
     """Classify user intent using fast LLM with Manual JSON Parsing."""
@@ -106,7 +102,6 @@ def classify_node(state: SupervisorState) -> SupervisorState:
     state["ticker"] = extract_ticker(question)
     state["risk_profile"] = extract_risk_profile(question)
 
-    # 1. Ép System Prompt phải nhắc mô hình trả về CHUẨN JSON
     json_instructions = """
 BẮT BUỘC TRẢ VỀ ĐỊNH DẠNG JSON. KHÔNG VIẾT THÊM BẤT KỲ CHỮ NÀO KHÁC TRƯỚC HAY SAU JSON.
 Cấu trúc JSON bắt buộc:
@@ -118,20 +113,16 @@ Cấu trúc JSON bắt buộc:
     llm = get_fast_llm(model_name=settings.nvidia_router_model)
     
     try:
-        # 2. Không dùng with_structured_output nữa, lấy text thô và tự parse
         raw_output = llm.invoke([HumanMessage(content=prompt)]).content.strip()
         
-        # 3. Dọn dẹp text thừa (Llama hay kẹp JSON trong thẻ markdown ```json ... ```)
         if raw_output.startswith("```json"):
             raw_output = raw_output[7:]
         if raw_output.endswith("```"):
             raw_output = raw_output[:-3]
         raw_output = raw_output.strip()
 
-        # 4. Tự Parse JSON
         parsed_json = json.loads(raw_output)
         
-        # 5. Kiểm tra và lọc intent
         raw_intents = parsed_json.get("selected_agents", [])
         if isinstance(raw_intents, list):
             intents = [i.strip() for i in raw_intents if i.strip() in INTENTS]
@@ -154,13 +145,11 @@ Cấu trúc JSON bắt buộc:
     return state
 
 
-# ── 2. Xử lý Rate Limit & Concurrency (THÊM MỚI) ──────────────────────────────
-# Token Bucket: Cho phép tối đa 2 requests mỗi 1 giây để chống lỗi 429
 rate_limiter = AsyncLimiter(max_rate=settings.llm_rate_limit, time_period=1)
 
 async def dispatch_node(state: SupervisorState) -> SupervisorState:
     """Dispatch to sub-agents in PARALLEL with Async/Await and Rate Limiting."""
-    import json # Thêm import json để xử lý dữ liệu Sentiment
+    import json
     
     intents = state["intents"]
     question = state["question"]
@@ -188,34 +177,28 @@ async def dispatch_node(state: SupervisorState) -> SupervisorState:
         "stock_info": "", "technical": "", "sentiment": "", "report_rag": ""
     }
 
-    # Hàm bọc (wrapper) để chạy hàm đồng bộ (sync) trong luồng bất đồng bộ (async thread)
     async def _run_bounded(key: str, fn, q: str):
-        async with rate_limiter: # Chờ Token Bucket cấp phép
+        async with rate_limiter:
             try:
                 logger.info(f"Chạy Agent Song Song: {key}...")
-                # to_thread giúp không làm treo Event Loop của FastAPI
                 output = await asyncio.to_thread(fn, q)
                 return key, output
             except Exception as e:
                 logger.error(f"Agent {key} error: {e}")
                 return key, f"[Thông báo: Hiện không thể lấy dữ liệu phần này do hệ thống bận. Lỗi: {e}]"
 
-    # Kích hoạt chạy tất cả các tasks cùng CÙNG MỘT LÚC (Parallel)
     coroutines = [_run_bounded(key, fn, q_task) for key, (fn, q_task) in tasks.items()]
     completed_results = await asyncio.gather(*coroutines)
 
     for key, output in completed_results:
         results[key] = output
 
-    # 1. Gán kết quả cho các Agent thông thường
     state["stock_info_result"] = results["stock_info"]
     state["technical_result"] = results["technical"]
     state["report_rag_result"] = results["report_rag"]
     
-    # 2. XỬ LÝ ĐẶC BIỆT CHO SENTIMENT: Bóc tách JSON thành Markdown và Metadata
     sentiment_raw = results["sentiment"]
     try:
-        # Nếu chuỗi trả về có dấu hiệu là JSON
         if sentiment_raw and sentiment_raw.strip().startswith("{"):
             data = json.loads(sentiment_raw)
             state["sentiment_result"] = data.get("markdown_report", "")
@@ -250,7 +233,6 @@ async def synthesize_node(state: SupervisorState) -> SupervisorState:
         state["chart_metadata"] = {"render_chart": False}
 
     if "advisor" in intents and state["ticker"]:
-        # Chạy hàm tổng hợp đồng bộ trong thread để không block
         answer = await asyncio.to_thread(
             synthesize_investment_advice,
             ticker=state["ticker"],
@@ -291,7 +273,6 @@ async def synthesize_node(state: SupervisorState) -> SupervisorState:
     try:
         llm = get_llm(temperature=0.1, model_name=settings.nvidia_advisor_model)
         chain = llm | StrOutputParser()
-        # Chạy ainvoke để hỗ trợ non-blocking FastAPI
         state["final_answer"] = await chain.ainvoke([HumanMessage(content=synthesis_prompt)])
     except Exception as e:
         logger.error(f"Lỗi tổng hợp dữ liệu tại Synthesize Node: {e}")
@@ -300,7 +281,6 @@ async def synthesize_node(state: SupervisorState) -> SupervisorState:
     return state
 
 
-# ── Build LangGraph ───────────────────────────────────────────────────────────
 
 def _build_graph() -> Any:
     graph = StateGraph(SupervisorState)
@@ -324,7 +304,6 @@ def get_supervisor() -> Any:
         _graph = _build_graph()
     return _graph
 
-# THAY ĐỔI QUAN TRỌNG: Đổi thành async def để chạy mượt trong FastAPI
 async def run_supervisor(question: str, start_date: str = None, end_date: str = None, interval: str = "1D") -> dict:
     supervisor = get_supervisor()
     initial_state: SupervisorState = {
@@ -344,12 +323,11 @@ async def run_supervisor(question: str, start_date: str = None, end_date: str = 
     }
     
     try:
-        # Thay thế .invoke thành .ainvoke() để chạy toàn bộ StateGraph bất đồng bộ
         result = await supervisor.ainvoke(initial_state)
         return {
             "answer": result.get("final_answer", "Xin lỗi, tôi không thể xử lý câu hỏi này."),
             "chart_metadata": result.get("chart_metadata", {"render_chart": False}),
-            "news_metadata": result.get("news_metadata") # Trả về cho Frontend
+            "news_metadata": result.get("news_metadata")
         }
     except Exception as e:
         logger.error(f"Fatal lỗi ở Supervisor: {e}")

@@ -22,19 +22,16 @@ def _load_price_df(ticker: str, period: str = "1y", start_date: str = None, end_
     """Load OHLCV data as a DataFrame with explicit dates (ignoring period)."""
     from datetime import datetime, timedelta
     
-    # 1. Bỏ qua period. Thiết lập ngày mặc định nếu user không truyền start_date/end_date (VD: Mặc định lấy 1 năm)
     today = datetime.now()
     end = end_date if end_date else today.strftime("%Y-%m-%d")
     start = start_date if start_date else (today - timedelta(days=365)).strftime("%Y-%m-%d")
 
-    # 2. Lùi 60 ngày để làm "bước đệm" tính toán các chỉ báo kỹ thuật (chống lỗi mất ngày hiển thị)
     try:
         fetch_start_dt = datetime.strptime(start, "%Y-%m-%d") - timedelta(days=60)
         fetch_start = fetch_start_dt.strftime("%Y-%m-%d")
     except Exception:
-        fetch_start = start # Fallback an toàn nếu lỗi format
+        fetch_start = start
 
-    # 3. Kéo dữ liệu từ vnstock
     from vnstock import Quote
     quote = Quote(symbol=ticker.upper())
     df = quote.history(start=fetch_start, end=end, interval=interval)
@@ -50,7 +47,6 @@ def _load_price_df(ticker: str, period: str = "1y", start_date: str = None, end_
     return df
 
 
-# ── Signal Generators (Hiện tại) ──────────────────────────────────────────────
 def _signal_sma(price: float, sma: float) -> str:
     if price > sma * 1.02: return "Giá đang TRÊN SMA → xu hướng tăng"
     elif price < sma * 0.98: return "Giá đang DƯỚI SMA → xu hướng giảm"
@@ -64,20 +60,17 @@ def _signal_rsi(rsi: float) -> str:
     return "RSI trung tính (40–60)"
 
 
-# ── Semantic Insight Generators (Python làm Data Analyst) ─────────────────────
 
 def _generate_sma_insights(df: pd.DataFrame, window: int) -> str:
     sma_col = f"sma_{window}"
     total_days = len(df)
     
-    # Thống kê lịch sử
     days_above = len(df[df["close"] > df[sma_col]])
     win_rate = (days_above / total_days) * 100
     
-    # Đánh giá xu hướng hiện tại (Động lượng)
     current_price = df["close"].iloc[-1]
     current_sma = df[sma_col].iloc[-1]
-    prev_sma = df[sma_col].iloc[-2] # Xem SMA đang dốc lên hay dốc xuống
+    prev_sma = df[sma_col].iloc[-2]
     
     trend_now = "TĂNG TÍCH CỰC" if current_price > current_sma and current_sma > prev_sma else \
                 "HỒI PHỤC KỸ THUẬT" if current_price > current_sma and current_sma <= prev_sma else \
@@ -93,13 +86,11 @@ def _generate_rsi_insights(df: pd.DataFrame, window: int) -> str:
     rsi_col = f"rsi_{window}"
     total_days = len(df)
     
-    # Thống kê lịch sử
     overbought_count = len(df[df[rsi_col] >= 70])
     oversold_count = len(df[df[rsi_col] <= 30])
     
-    # Đánh giá xu hướng hiện tại
     current_rsi = df[rsi_col].iloc[-1]
-    prev_rsi_avg = df[rsi_col].iloc[-4:-1].mean() # Trung bình RSI 3 phiên trước đó
+    prev_rsi_avg = df[rsi_col].iloc[-4:-1].mean()
     
     momentum = "Đang dốc lên (Dòng tiền vào)" if current_rsi > prev_rsi_avg else "Đang cắm xuống (Áp lực chốt lời)"
     
@@ -115,13 +106,11 @@ def _generate_rsi_insights(df: pd.DataFrame, window: int) -> str:
 
 def _generate_macd_insights(df: pd.DataFrame, fast: int, slow: int, signal: int, col_macd: str, col_sig: str) -> str:
     total_days = len(df)
-    col_hist = df.columns[df.columns.str.contains('MACDh')][0] # Lấy cột Histogram
+    col_hist = df.columns[df.columns.str.contains('MACDh')][0]
     
-    # Thống kê lịch sử
     diff = df[col_macd] - df[col_sig]
     crossovers = (diff * diff.shift(1) < 0).sum()
     
-    # Đánh giá xu hướng hiện tại
     current_macd = df[col_macd].iloc[-1]
     current_sig = df[col_sig].iloc[-1]
     current_hist = df[col_hist].iloc[-1]
@@ -143,25 +132,20 @@ def _generate_macd_insights(df: pd.DataFrame, fast: int, slow: int, signal: int,
 def _generate_bb_insights(df: pd.DataFrame, window: int, std: float, col_upper: str, col_lower: str) -> str:
     total_days = len(df)
     
-    # Thống kê lịch sử
     above_upper = len(df[df["close"] > df[col_upper]])
     below_lower = len(df[df["close"] < df[col_lower]])
     
-    # Tính toán trạng thái hiện tại
     current_price = df["close"].iloc[-1]
     current_upper = df[col_upper].iloc[-1]
     current_lower = df[col_lower].iloc[-1]
     
-    # Tính Bandwidth (Độ rộng của dải) để đánh giá trạng thái nén/mở (Squeeze/Expansion)
     current_bw = (current_upper - current_lower) / current_price
     prev_bw = (df[col_upper].iloc[-2] - df[col_lower].iloc[-2]) / df["close"].iloc[-2]
     
-    # So sánh Bandwidth để xem biến động
     volatility = "MỞ RỘNG (Biến động mạnh/Sắp có xu hướng rõ ràng)" if current_bw > prev_bw * 1.05 else \
                  "THU HẸP (Tích lũy nén chặt/Sắp có bứt phá)" if current_bw < prev_bw * 0.95 else \
                  "ĐIỀU HÒA (Biến động ổn định)"
 
-    # Đánh giá vị trí và hành động giá (%B)
     if current_price >= current_upper:
         position = "Giá chạm/vượt CẠNH TRÊN (Upper Band)"
         trend = "Quá mua (Overbought) - Rủi ro chốt lời hoặc cổ phiếu đang vào siêu sóng tăng."
@@ -169,7 +153,6 @@ def _generate_bb_insights(df: pd.DataFrame, window: int, std: float, col_upper: 
         position = "Giá chạm/thủng CẠNH DƯỚI (Lower Band)"
         trend = "Quá bán (Oversold) - Cơ hội hồi phục hoặc cổ phiếu đang rơi rụng mạnh."
     else:
-        # Giá nằm trong band, tính %B để định vị
         percent_b = (current_price - current_lower) / (current_upper - current_lower)
         if percent_b > 0.5:
             position = "Nửa TRÊN của dải Bollinger"
@@ -184,7 +167,6 @@ def _generate_bb_insights(df: pd.DataFrame, window: int, std: float, col_upper: 
             f"- Vị trí hiện tại: {position}.\n"
             f"- Đánh giá xu hướng: {trend}")
 
-# ── LangChain Tools ───────────────────────────────────────────────────────────
 
 @tool
 def calculate_sma(ticker: str, window: int = 14, period: str = "1y", start_date: str = None, end_date: str = None, interval: str = "1D", full_data: bool = False) -> str:
@@ -201,14 +183,11 @@ def calculate_sma(ticker: str, window: int = 14, period: str = "1y", start_date:
         df_valid = df.dropna(subset=[f"sma_{window}"])
         actual_start = start_date if start_date else _resolve_dates(period, None, None)[0]
         
-        # 2. Ép kiểu datetime để so sánh an toàn
         actual_start_dt = pd.to_datetime(actual_start)
         df_valid = df_valid[df_valid.index >= actual_start_dt]
         
-        # 3. Lớp phòng vệ chống lỗi IndexError
         if df_valid.empty:
             return json.dumps({"error": f"Không có dữ liệu giao dịch hợp lệ từ ngày {actual_start}."}, ensure_ascii=False)
-        # -----------------------------------------------
         
         last = df_valid.iloc[-1]
         current_price = float(last["close"])
@@ -256,14 +235,11 @@ def calculate_rsi(ticker: str, window: int = 14, period: str = "1y", start_date:
         actual_start, _ = _resolve_dates(period, start_date, end_date)
         actual_start = start_date if start_date else _resolve_dates(period, None, None)[0]
         
-        # 2. Ép kiểu datetime để so sánh an toàn
         actual_start_dt = pd.to_datetime(actual_start)
         df_valid = df_valid[df_valid.index >= actual_start_dt]
         
-        # 3. Lớp phòng vệ chống lỗi IndexError
         if df_valid.empty:
             return json.dumps({"error": f"Không có dữ liệu giao dịch hợp lệ từ ngày {actual_start}."}, ensure_ascii=False)
-        # -----------------------------------------------
         
         last = df_valid.iloc[-1]
         last_rsi = float(last[f"rsi_{window}"])
@@ -309,21 +285,17 @@ def calculate_macd(ticker: str, fast: int = 12, slow: int = 26, signal: int = 9,
         if macd_df is None or macd_df.empty:
             return json.dumps({"error": "Lỗi tính MACD"})
 
-        # TỐI ƯU: Lấy tên cột tự động để tránh lỗi KeyError do sai version thư viện
         col_macd, col_hist, col_sig = macd_df.columns[0], macd_df.columns[1], macd_df.columns[2]
 
         df = pd.concat([df, macd_df], axis=1)
         df_valid = df.dropna(subset=[col_macd])
         actual_start = start_date if start_date else _resolve_dates(period, None, None)[0]
         
-        # 2. Ép kiểu datetime để so sánh an toàn
         actual_start_dt = pd.to_datetime(actual_start)
         df_valid = df_valid[df_valid.index >= actual_start_dt]
         
-        # 3. Lớp phòng vệ chống lỗi IndexError
         if df_valid.empty:
             return json.dumps({"error": f"Không có dữ liệu giao dịch hợp lệ từ ngày {actual_start}."}, ensure_ascii=False)
-        # -----------------------------------------------
         
         last = df_valid.iloc[-1]
         macd_val, sig_val, hist_val = float(last[col_macd]), float(last[col_sig]), float(last[col_hist])
@@ -345,7 +317,6 @@ def calculate_macd(ticker: str, fast: int = 12, slow: int = 26, signal: int = 9,
         if full_data:
             result["history_data"] = (
                 df_valid[[col_macd, col_sig, col_hist, "close"]].reset_index()
-                # THÊM DÒNG RENAME NÀY VÀO:
                 .rename(columns={col_macd: "macd", col_sig: "signal_line", col_hist: "histogram"})
                 .assign(date=lambda x: x["date"].dt.strftime("%Y-%m-%d"))
                 .to_dict(orient="records")
@@ -374,22 +345,17 @@ def calculate_bollinger_bands(ticker: str, window: int = 20, std: float = 2.0, p
         bb = ta.bbands(df["close"], length=window, std=std)
         if bb is None or bb.empty: return json.dumps({"error": "Lỗi tính Bollinger Bands"})
 
-        # TỐI ƯU: Đã xóa dòng code bị lặp `bb = ta.bbands(...)` trong file gốc
-        # Lấy tên cột tự động từ DataFrame trả về thay vì hardcode (Chống lỗi BBU_20_2.0)
         col_lower, col_mid, col_upper = bb.columns[0], bb.columns[1], bb.columns[2]
         
         df = pd.concat([df, bb], axis=1)
         df_valid = df.dropna(subset=[col_upper])
         actual_start = start_date if start_date else _resolve_dates(period, None, None)[0]
         
-        # 2. Ép kiểu datetime để so sánh an toàn
         actual_start_dt = pd.to_datetime(actual_start)
         df_valid = df_valid[df_valid.index >= actual_start_dt]
         
-        # 3. Lớp phòng vệ chống lỗi IndexError
         if df_valid.empty:
             return json.dumps({"error": f"Không có dữ liệu giao dịch hợp lệ từ ngày {actual_start}."}, ensure_ascii=False)
-        # -----------------------------------------------
 
         last = df_valid.iloc[-1]
         price, upper, mid, lower = float(last["close"]), float(last[col_upper]), float(last[col_mid]), float(last[col_lower])
@@ -413,7 +379,6 @@ def calculate_bollinger_bands(ticker: str, window: int = 20, std: float = 2.0, p
         if full_data:
             result["history_data"] = (
                 df_valid[[col_upper, col_mid, col_lower, "close"]].reset_index()
-                # THÊM DÒNG RENAME NÀY VÀO:
                 .rename(columns={col_upper: "upper_band", col_mid: "middle_band", col_lower: "lower_band"})
                 .assign(date=lambda x: x["date"].dt.strftime("%Y-%m-%d"))
                 .to_dict(orient="records")

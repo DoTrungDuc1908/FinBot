@@ -10,7 +10,6 @@ import {
 } from 'recharts';
 import './index.css';
 
-// --- Types ---
 interface Message {
   id: string;
   type: 'user' | 'bot';
@@ -22,8 +21,6 @@ interface Message {
 
 const API_BASE_URL = 'http://localhost:8080';
 
-// --- COMPONENT VẼ BIỂU ĐỒ TỰ ĐỘNG ---
-// --- COMPONENT VẼ BIỂU ĐỒ ĐA CHỈ BÁO ---
 const INDICATOR_OPTIONS = [
   { id: 'sma', label: 'SMA' },
   { id: 'rsi', label: 'RSI' },
@@ -35,13 +32,12 @@ const StockChart: React.FC<{ metadata: any }> = ({ metadata }) => {
   const [data, setData] = useState<any[]>([]);
   const [period, setPeriod] = useState(metadata.default_period || '6m');
   const [loading, setLoading] = useState(false);
-  // Trạng thái lưu mảng các chỉ báo đang được bật
   const [selectedIndicators, setSelectedIndicators] = useState<string[]>([metadata.default_indicator || 'sma']);
 
   const toggleIndicator = (ind: string) => {
     setSelectedIndicators(prev => {
       if (prev.includes(ind)) {
-        if (prev.length === 1) return prev; // Không cho phép tắt hết
+        if (prev.length === 1) return prev;
         return prev.filter(i => i !== ind);
       }
       return [...prev, ind];
@@ -54,7 +50,7 @@ const StockChart: React.FC<{ metadata: any }> = ({ metadata }) => {
       try {
         const res = await axios.get(`${API_BASE_URL}/stock/${metadata.ticker}/technical`, {
           params: {
-            indicator: selectedIndicators.join(','), // Gửi chuỗi 'sma,rsi,macd'
+            indicator: selectedIndicators.join(','),
             period: metadata.start_date ? undefined : period,
             start: metadata.start_date,
             end: metadata.end_date,
@@ -187,7 +183,6 @@ const StockChart: React.FC<{ metadata: any }> = ({ metadata }) => {
 };
 
 
-// --- APP CHÍNH ---
 const App: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -195,7 +190,6 @@ const App: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [marketOverview, setMarketOverview] = useState<any>(null);
   
-  // State quản lý thời gian
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [interval, setInterval] = useState('1D');
@@ -244,7 +238,6 @@ const App: React.FC = () => {
         question: input,
         risk_profile: 'trung bình',
         session_id: 'browser-user-' + Date.now(),
-        // Truyền metadata thời gian xuống backend
         start_date: startDate || undefined,
         end_date: endDate || undefined,
         interval: interval

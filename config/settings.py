@@ -17,7 +17,6 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # ── NVIDIA NIM ──────────────────────────────────────────
     nvidia_api_key: str = Field(default="", alias="NVIDIA_API_KEY")
     nvidia_base_url: str = Field(
         default="https://integrate.api.nvidia.com/v1", alias="NVIDIA_BASE_URL"
@@ -26,30 +25,23 @@ class Settings(BaseSettings):
         default="nvidia/nv-embedqa-e5-v5", alias="NVIDIA_EMBEDDING_MODEL"
     )
     
-    # 1. Model Mặc định (Dự phòng)
     nvidia_llm_model: str = Field(default="meta/llama-3.1-70b-instruct", alias="NVIDIA_LLM_MODEL")
     
-    # 2. Model cho Router (Chạy siêu tốc, phân loại dữ liệu) - Ví dụ Supervisor
     nvidia_router_model: str = Field(default="meta/llama-3.1-8b-instruct", alias="NVIDIA_ROUTER_MODEL")
     
-    # 3. Model cho Agent tra cứu (Rẻ, ổn định) - Ví dụ Stock, Tech, Sentiment
     nvidia_agent_model: str = Field(default="meta/llama-3.1-70b-instruct", alias="NVIDIA_AGENT_MODEL")
 
     nvidia_sentiment_model: str = Field(default="qwen/qwen3-next-80b-a3b-thinking", alias="NVIDIA_SENTIMENT_MODEL")
     
-    # 4. Model Suy luận sâu (Tốt nhất có thể) - Ví dụ Advisor, RAG
     nvidia_advisor_model: str = Field(default="meta/llama-3.1-70b-instruct", alias="NVIDIA_ADVISOR_MODEL")
     
-    # 5. Model chuyên Data/JSON (Không cần instruct phức tạp) - Ví dụ quét tin tức Batching
     nvidia_eval_model: str = Field(default="meta/llama-3.1-8b-instruct", alias="NVIDIA_EVAL_MODEL")
 
-    # ── REDIS ────────────────────────────────────────────────
     redis_host: str = Field(default="localhost", alias="REDIS_HOST")
     redis_port: int = Field(default=6379, alias="REDIS_PORT")
     redis_db: int = Field(default=0, alias="REDIS_DB")
     redis_password: str = Field(default="", alias="REDIS_PASSWORD")
 
-    # ── POSTGRESQL ───────────────────────────────────────────
     postgres_host: str = Field(default="localhost", alias="POSTGRES_HOST")
     postgres_port: int = Field(default=5432, alias="POSTGRES_PORT")
     postgres_db: str = Field(default="finbot", alias="POSTGRES_DB")
@@ -63,7 +55,6 @@ class Settings(BaseSettings):
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
-    # ── CHROMADB ─────────────────────────────────────────────
     chroma_host: str = Field(default="localhost", alias="CHROMA_HOST")
     chroma_port: int = Field(default=8000, alias="CHROMA_PORT")
     chroma_collection_reports: str = Field(
@@ -71,12 +62,10 @@ class Settings(BaseSettings):
     )
     chroma_collection_news: str = Field(default="stock_news", alias="CHROMA_COLLECTION_NEWS")
 
-    # ── API SERVER ───────────────────────────────────────────
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8080, alias="API_PORT")
     api_debug: bool = Field(default=False, alias="API_DEBUG")
 
-    # ── STOCK SOURCES ────────────────────────────────────────
     tcbs_base_url: str = Field(
         default="https://apipubaws.tcbs.com.vn", alias="TCBS_BASE_URL"
     )
@@ -84,7 +73,6 @@ class Settings(BaseSettings):
         default="https://fc-data.ssi.com.vn", alias="SSI_BASE_URL"
     )
 
-    # ── NEWS ─────────────────────────────────────────────────
     cafef_rss: str = Field(
         default="https://cafef.vn/thi-truong-chung-khoan.rss", alias="CAFEF_RSS"
     )
@@ -92,22 +80,16 @@ class Settings(BaseSettings):
         default="https://vneconomy.vn/chung-khoan.rss", alias="VNECONOMY_RSS"
     )
 
-    # ── APP & CACHE ──────────────────────────────────────────
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     cache_ttl_price: int = Field(default=300, alias="CACHE_TTL_PRICE")
     cache_ttl_company: int = Field(default=86400, alias="CACHE_TTL_COMPANY")
     cache_ttl_news: int = Field(default=1800, alias="CACHE_TTL_NEWS")
     max_tokens_per_request: int = Field(default=4096, alias="MAX_TOKENS_PER_REQUEST")
 
-    # ── SYSTEM TUNING (THÊM MỚI) ─────────────────────────────
-    # Thời gian chờ tối đa khi gọi API bên thứ 3 (tránh treo app)
     request_timeout: int = Field(default=10, alias="REQUEST_TIMEOUT") 
     
-    # Số lần tự động thử lại khi rớt mạng (dùng cho Tenacity)
     max_retries: int = Field(default=3, alias="MAX_RETRIES")
     
-    # Công tắc bật/tắt luồng song song. 
-    # Mặc định False để dùng bản Free NIM không bị lỗi 429. Bật True nếu dùng bản trả phí.
     enable_parallel_agents: bool = Field(default=True, alias="ENABLE_PARALLEL_AGENTS")
     llm_rate_limit: int = Field(default=1, alias="LLM_RATE_LIMIT")
 

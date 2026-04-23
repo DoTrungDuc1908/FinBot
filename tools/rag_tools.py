@@ -18,7 +18,6 @@ from core.cache import cache, CacheClient
 from core.vector_store import similarity_search, add_documents
 
 
-# ── Document Ingestion ────────────────────────────────────────────────────────
 
 def ingest_pdf(pdf_path: str, ticker: str, report_type: str = "financial") -> int:
     """
@@ -39,7 +38,6 @@ def ingest_pdf(pdf_path: str, ticker: str, report_type: str = "financial") -> in
         for page in reader.pages:
             full_text += page.extract_text() or ""
 
-        # Chunk text into ~500 word pieces with 50-word overlap
         words = full_text.split()
         chunk_size = 500
         overlap = 50
@@ -67,17 +65,14 @@ def ingest_pdf(pdf_path: str, ticker: str, report_type: str = "financial") -> in
         logger.info(f"Ingested {len(docs)} chunks from {pdf_path} for {ticker}")
         return len(docs)
     except Exception as e:
-        # THÊM MỚI: In ra chi tiết Traceback nếu file PDF lỗi hoặc ChromaDB từ chối
         logger.exception(f"LỖI NGHIÊM TRỌNG khi nạp PDF {pdf_path} cho mã {ticker}:")
         return 0
 
 
-# tools/rag_tools.py
 
 def ingest_text(text: str, ticker: str, source: str, report_type: str = "analyst") -> int:
     """Ingest raw text into the vector store."""
     try:
-        # Làm sạch text đầu vào
         text = text.strip()
         if not text: return 0
 
@@ -97,7 +92,6 @@ def ingest_text(text: str, ticker: str, source: str, report_type: str = "analyst
             for idx, chunk in enumerate(chunks) if chunk.strip()
         ]
         
-        # CẬP NHẬT: Nhận số lượng thực tế từ core/vector_store.py
         actual_chunks = add_documents(settings.chroma_collection_reports, docs)
         return actual_chunks
     except Exception as e:
@@ -105,7 +99,6 @@ def ingest_text(text: str, ticker: str, source: str, report_type: str = "analyst
         return 0
 
 
-# ── LangChain Tools ───────────────────────────────────────────────────────────
 
 @tool
 def search_financial_reports(ticker: str, query: str, k: int = 5) -> str:
@@ -145,7 +138,6 @@ def search_financial_reports(ticker: str, query: str, k: int = 5) -> str:
         cache.set(cache_key, result, ttl=3600)
         return json.dumps(result, ensure_ascii=False, indent=2)
     except Exception as e:
-        # THÊM MỚI: In Traceback và trả về JSON lỗi cho LLM xử lý
         logger.exception(f"LỖI RAG (search_financial_reports) cho mã {ticker}:")
         return json.dumps({"error": f"Lỗi truy xuất Báo cáo tài chính: {str(e)}", "ticker": ticker, "query": query}, ensure_ascii=False)
 
@@ -187,7 +179,6 @@ def search_analyst_reports(ticker: str, query: str, k: int = 5) -> str:
         cache.set(cache_key, result, ttl=3600)
         return json.dumps(result, ensure_ascii=False, indent=2)
     except Exception as e:
-        # THÊM MỚI: In Traceback và trả về JSON lỗi cho LLM xử lý
         logger.exception(f"LỖI RAG (search_analyst_reports) cho mã {ticker}:")
         return json.dumps({"error": f"Lỗi truy xuất Báo cáo phân tích: {str(e)}", "ticker": ticker, "query": query}, ensure_ascii=False)
 
@@ -217,6 +208,5 @@ def list_available_reports(ticker: Optional[str] = None) -> str:
         })
         return json.dumps({"available_reports": sources, "count": len(sources)}, ensure_ascii=False)
     except Exception as e:
-        # THÊM MỚI: Bổ sung logger.exception thay vì âm thầm trả về lỗi
         logger.exception("LỖI NGHIÊM TRỌNG khi lấy danh sách báo cáo (list_available_reports):")
         return json.dumps({"error": f"Lỗi liệt kê báo cáo: {str(e)}"}, ensure_ascii=False)

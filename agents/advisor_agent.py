@@ -5,7 +5,7 @@ Investment Advisor Agent — tổng hợp từ tất cả các agent và đưa r
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
-from loguru import logger  # THÊM MỚI: Import thư viện ghi log
+from loguru import logger
 
 from core.llm import get_llm
 from config.settings import settings
@@ -20,30 +20,24 @@ TUYỆT ĐỐI KHÔNG viết hời hợt, chung chung hoặc cụt ngủn. Phả
 
 **Cấu trúc báo cáo tư vấn bắt buộc:**
 
-## 1. Tổng quan Doanh nghiệp & Vị thế
 [Phân tích chi tiết vị thế hiện tại của cổ phiếu/doanh nghiệp. Kết hợp góc nhìn từ biến động giá gần đây và bối cảnh chung. Tránh viết chỉ 1-2 câu sơ sài.]
 
-## 2. Phân tích Kỹ thuật Chuyên sâu
 [Đi sâu vào các tín hiệu kỹ thuật (SMA, RSI, MACD, Bollinger Bands...). KHÔNG CHỈ liệt kê con số, mà PHẢI GIẢI THÍCH ý nghĩa của chúng đối với hành động giá (Ví dụ: RSI chạm 70 cho thấy điều gì? MACD cắt lên có ý nghĩa gì với xu hướng?). Đưa ra nhận định cụ thể về xu hướng ngắn và trung hạn.]
 
-## 3. Tin tức & Tâm lý thị trường (Sentiment)
 [Đánh giá sâu sắc về dòng thông tin hiện tại và tác động tâm lý lên nhà đầu tư (Tích cực/Tiêu cực/Trung lập). 
-BẮT BUỘC liệt kê lại danh sách các bài báo nổi bật (Tiêu đề, Link) và trích dẫn Y NGUYÊN phần "🧠 AI Đánh giá" từ dữ liệu đầu vào. Tuyệt đối không được lược bỏ hay rút gọn chi tiết này.]
+BẮT BUỘC liệt kê lại danh sách các bài báo nổi bật (Tiêu đề, Link) và trích dẫn Y NGUYÊN phần "AI Đánh giá" từ dữ liệu đầu vào. Tuyệt đối không được lược bỏ hay rút gọn chi tiết này.]
 
-## 4. Phân tích Cơ bản & Sức khỏe Tài chính
 [Trình bày chi tiết các chỉ số tài chính (P/E, P/B, ROE, EPS...). Đi sâu vào việc đánh giá xem các con số này nói lên điều gì về định giá (Đắt hay Rẻ so với thị trường?) và hiệu quả hoạt động của doanh nghiệp.]
 
-## 5. Rủi ro & Điểm nghẽn cần lưu ý
 [Phân tích tối thiểu 2-3 rủi ro cụ thể: rủi ro hệ thống (thị trường chung), rủi ro ngành, hoặc rủi ro nội tại doanh nghiệp. Giải thích rõ tại sao đó là rủi ro đáng ngại.]
 
-## 6. Khuyến nghị Đầu tư
 **Hành động:** [MUA / NẮM GIỮ / BÁN]
 **Độ tin cậy:** [Cao / Trung bình / Thấp]
 **Khẩu vị rủi ro phù hợp:** [Thấp / Trung bình / Cao]
 **Luận điểm đầu tư:** [Viết 3-4 câu lập luận sắc bén, logic, xâu chuỗi lại toàn bộ phân tích ở trên (kết hợp cả kỹ thuật, cơ bản và tin tức) để bảo vệ cho khuyến nghị của mình. Phải có tính thuyết phục cao.]
 
 ---
-⚠️ *Đây là thông tin tham khảo, không phải lời khuyên đầu tư chính thức. Nhà đầu tư tự chịu trách nhiệm về quyết định của mình.*
+ *Đây là thông tin tham khảo, không phải lời khuyên đầu tư chính thức. Nhà đầu tư tự chịu trách nhiệm về quyết định của mình.*
 
 **Quy tắc Hành xử Cốt lõi:**
 - CHUYÊN SÂU & CHI TIẾT: Mỗi phần phải được diễn giải mạch lạc, có luận điểm rõ ràng, sử dụng gạch đầu dòng để phân chia ý. Không dùng những cụm từ cụt ngủn vô nghĩa.
@@ -88,7 +82,6 @@ def synthesize_investment_advice(
     user_content = "\n".join(context_parts)
     user_content += "\n\nDựa vào tất cả thông tin trên, hãy viết báo cáo tư vấn đầu tư đầy đủ."
 
-    # THÊM MỚI: Bọc trong try...except để track lỗi
     try:
         time.sleep(2)
         logger.debug(f"Đang tổng hợp báo cáo tư vấn cho {ticker.upper()}...")
@@ -108,7 +101,7 @@ def synthesize_investment_advice(
         logger.error(f"Lỗi khi tổng hợp báo cáo tư vấn cho {ticker.upper()}: {str(e)}")
         
         return (
-            f"## ⚠️ Thông báo gián đoạn\n\n"
+            f"##  Thông báo gián đoạn\n\n"
             f"Hệ thống hiện tại đang gặp sự cố khi tạo báo cáo tư vấn tổng hợp cho mã **{ticker.upper()}**. "
             f"Có thể do dịch vụ xử lý ngôn ngữ đang quá tải.\n\n"
             f"*Chi tiết lỗi hệ thống: {str(e)}*\n\n"

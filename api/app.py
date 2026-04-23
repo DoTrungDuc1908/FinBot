@@ -13,11 +13,9 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from loguru import logger
 
-# from config.settings import Settings
 from agents.supervisor import run_supervisor
 from core.cache import cache
 
-# ── App setup ─────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="FinBot — AI Tư Vấn Đầu Tư Việt Nam",
     description="Hệ thống multi-agent AI hỗ trợ phân tích và tư vấn đầu tư chứng khoán Việt Nam",
@@ -34,13 +32,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Request / Response Models ─────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
     question: str = Field(..., min_length=3, max_length=2000, description="Câu hỏi của người dùng")
     risk_profile: Optional[str] = Field("trung bình", description="Khẩu vị rủi ro")
     session_id: Optional[str] = Field(None, description="Session ID")
-    # THÊM MỚI: Nhận tham số thời gian
     start_date: Optional[str] = Field(None, description="Ngày bắt đầu (YYYY-MM-DD)")
     end_date: Optional[str] = Field(None, description="Ngày kết thúc (YYYY-MM-DD)")
     interval: Optional[str] = Field("1D", description="Khung thời gian (1D, 1W, 1M)")
@@ -59,7 +55,6 @@ class HealthResponse(BaseModel):
     version: str
 
 
-# ── Health Check ──────────────────────────────────────────────────────────────
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 async def health_check():
@@ -72,7 +67,6 @@ async def health_check():
     )
 
 
-# ── Chat Endpoint ─────────────────────────────────────────────────────────────
 
 @app.post("/chat", response_model=ChatResponse, tags=["Chat"])
 async def chat(request: ChatRequest):
@@ -84,7 +78,6 @@ async def chat(request: ChatRequest):
     try:
         logger.info(f"[{request.session_id}] Q: {request.question[:80]}")
         
-        # Gọi luồng xử lý chính
         bot_response = await run_supervisor(
             question=question,
             start_date=request.start_date,
@@ -99,7 +92,7 @@ async def chat(request: ChatRequest):
             session_id=request.session_id,
             latency_ms=latency,
             chart_metadata=bot_response.get("chart_metadata"),
-            news_metadata=bot_response.get("news_metadata") # Trả về an toàn
+            news_metadata=bot_response.get("news_metadata")
         )
         
     except Exception as e:
@@ -107,7 +100,6 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=f"Lỗi hệ thống: {str(e)}")
 
 
-# ── Quick Lookup Endpoints ────────────────────────────────────────────────────
 
 @app.get("/stock/{ticker}", tags=["Stock"])
 async def get_stock_info(ticker: str):
@@ -162,7 +154,6 @@ async def get_technical(
         "bbands": (calculate_bollinger_bands, {"ticker": ticker, "window": window, "period": period, "start_date": start, "end_date": end, "interval": interval, "full_data": full_data}),
     }
     
-    # Hỗ trợ nhận nhiều chỉ báo cách nhau bằng dấu phẩy
     indicators = [i.strip().lower() for i in indicator.split(',') if i.strip().lower() in tool_map]
     if not indicators:
         raise HTTPException(status_code=400, detail="Indicator không hợp lệ.")
@@ -180,16 +171,14 @@ async def get_technical(
             if isinstance(hist, list):
                 for row in hist:
                     d = row["date"]
-                    # Khởi tạo ngày nếu chưa có
                     if d not in merged_history:
                         merged_history[d] = {"date": d, "close": row.get("close")}
                     
-                    # Gộp các cột chỉ báo vào chung 1 ngày
                     for k, v in row.items():
                         if k not in ["date", "close"]:
                             merged_history[d][k] = v
         except Exception as e:
-            pass # Bỏ qua nếu có 1 chỉ báo lỗi để các chỉ báo khác vẫn vẽ được
+            pass
             
     final_data = sorted(list(merged_history.values()), key=lambda x: x["date"])
     return JSONResponse(content={"ticker": ticker.upper(), "indicators": indicators, "data": {"history_data": final_data}})
@@ -217,7 +206,6 @@ async def get_market():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── Report Ingestion ──────────────────────────────────────────────────────────
 
 class IngestRequest(BaseModel):
     ticker: str

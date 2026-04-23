@@ -3,7 +3,7 @@ agents/sentiment_agent.py
 Agent phân tích sentiment tin tức và tâm lý thị trường.
 """
 from langchain.agents import create_agent
-from loguru import logger  # THÊM MỚI: Import thư viện ghi log
+from loguru import logger
 
 from core.llm import get_llm
 from config.settings import settings
@@ -24,11 +24,9 @@ Quy tắc:
 
 Trả lời bằng tiếng Việt, khách quan và có nguồn trích dẫn."""
 
-# Danh sách các công cụ
 _TOOLS = [fetch_stock_news, analyze_stock_sentiment, get_market_news]
 
 def create_sentiment_agent():
-    # Sử dụng temperature thấp để đảm bảo tính khách quan
     llm = get_llm(temperature=0.0, model_name=settings.nvidia_agent_model)
     
     return create_agent(

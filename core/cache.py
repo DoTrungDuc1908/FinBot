@@ -83,7 +83,6 @@ class CacheClient:
         return hashlib.md5(s.encode()).hexdigest()[:12]
 
 
-# Singleton instance
 cache = CacheClient()
 
 

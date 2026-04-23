@@ -17,14 +17,13 @@ from loguru import logger
 from config.settings import settings
 from core.cache import cached, cache, CacheClient
 
-# ── Period aliases ────────────────────────────────────────────────────────────
 PERIOD_ALIASES: dict[str, int] = {
     "1w": 7,
     "1m": 30,
     "3m": 90,
     "6m": 180,
     "1y": 365,
-    "ytd": 0,  # handled separately
+    "ytd": 0,
 }
 
 
@@ -46,7 +45,6 @@ def _resolve_dates(period: str | None, start: str | None, end: str | None):
     return start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d")
 
 
-# ── vnstock wrapper ───────────────────────────────────────────────────────────
 
 def _fetch_price_vnstock(ticker: str, start: str, end: str) -> list[dict]:
     """Fetch OHLCV from vnstock library."""
@@ -54,7 +52,6 @@ def _fetch_price_vnstock(ticker: str, start: str, end: str) -> list[dict]:
         import pandas as pd
         from vnstock import Quote  # type: ignore
         
-        # vnstock v3 sử dụng class Quote thay cho hàm stock_historical_data
         quote = Quote(symbol=ticker.upper())
         df = quote.history(
             start=start,
@@ -65,11 +62,8 @@ def _fetch_price_vnstock(ticker: str, start: str, end: str) -> list[dict]:
         if df is None or df.empty:
             return []
             
-        # vnstock v3 mặc định trả về các cột: time, open, high, low, close, volume
-        # Ta chỉ cần đổi tên cột 'time' thành 'date'
         df = df.rename(columns={"time": "date"})
         
-        # Format định dạng ngày tháng
         df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
         
         return df[["date", "open", "high", "low", "close", "volume"]].to_dict(orient="records")
@@ -82,7 +76,6 @@ def _fetch_company_tcbs(ticker: str) -> dict:
     """Fetch company overview from TCBS."""
     url = f"{settings.tcbs_base_url}/stock-insight/v2/stock/ticker/{ticker.upper()}/company"
     try:
-        # Lấy timeout từ settings, mặc định 10s
         timeout_val = getattr(settings, "request_timeout", 10)
         resp = requests.get(url, timeout=timeout_val)
         resp.raise_for_status()
@@ -101,7 +94,6 @@ def _fetch_company_tcbs(ticker: str) -> dict:
         return {}
 
 
-# ── LangChain Tools ───────────────────────────────────────────────────────────
 
 @tool
 def get_company_info(ticker: str) -> str:
@@ -147,14 +139,12 @@ def get_price_history(
         period: Khung thời gian: '1w', '1m', '3m', '6m', '1y', 'ytd'.
     """
     try:
-        # 1. Ưu tiên tuyệt đối start_date và end_date
         if start_date and end_date:
             start = start_date
             end = end_date
         else:
             start, end = _resolve_dates(period, start_date, end_date)
 
-        # 2. LỚP BẢO VỆ: Đảo chiều nếu AI lỡ truyền start > end
         import pandas as pd
         if pd.to_datetime(start) > pd.to_datetime(end):
             start, end = end, start 
@@ -165,10 +155,8 @@ def get_price_history(
             logger.debug(f"Cache HIT: price {ticker} {start}-{end}")
             return json.dumps(cached_val, ensure_ascii=False)
 
-        # 3. Kéo dữ liệu
         records = _fetch_price_vnstock(ticker, start, end)
         
-        # 4. Kiểm tra dữ liệu rỗng
         if not records:
             return json.dumps({"error": f"Không có dữ liệu giá giao dịch cho mã {ticker} từ {start} đến {end}."}, ensure_ascii=False)
 

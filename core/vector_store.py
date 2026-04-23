@@ -18,7 +18,6 @@ import requests
 
 @lru_cache(maxsize=1)
 def _get_chroma_client():
-    # Thay vì dùng HttpClient, ta dùng PersistentClient để chạy cục bộ
     return chromadb.PersistentClient(path="./chroma_data")
 
 
@@ -44,11 +43,8 @@ def get_news_store() -> Chroma:
     return get_vector_store(settings.chroma_collection_news)
 
 
-# core/vector_store.py
 
-# core/vector_store.py
 
-# core/vector_store.py
 
 def _get_nvidia_embedding_direct(text: str) -> List[float]:
     """Gọi trực tiếp API NVIDIA để lấy embedding, tránh lỗi định dạng mảng."""
@@ -58,7 +54,7 @@ def _get_nvidia_embedding_direct(text: str) -> List[float]:
         "Content-Type": "application/json"
     }
     payload = {
-        "input": text, # Gửi string trực tiếp, không để trong [ ]
+        "input": text,
         "model": "nvidia/nv-embedqa-e5-v5",
         "input_type": "query"
     }
@@ -80,10 +76,8 @@ def add_documents(collection_name: str, docs: List[Document]) -> int:
     success_count = 0
     for idx, doc in enumerate(docs):
         try:
-            # 1. Lấy embedding trực tiếp (ép kiểu chuỗi)
             vector = _get_nvidia_embedding_direct(doc.page_content)
             
-            # 2. Nạp vào Chroma
             store.add_texts(
                 texts=[doc.page_content],
                 metadatas=[doc.metadata],

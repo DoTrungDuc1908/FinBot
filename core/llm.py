@@ -12,7 +12,6 @@ class SingleToolChatOpenAI(ChatOpenAI):
         kwargs["parallel_tool_calls"] = False
         return super().bind_tools(tools, **kwargs)
 
-# Tăng maxsize để cache lại nhiều loại model khác nhau thay vì chỉ 1
 @lru_cache(maxsize=5)
 def get_llm(temperature: float = 0.1, max_tokens: int | None = None, model_name: str | None = None) -> ChatOpenAI:
     """

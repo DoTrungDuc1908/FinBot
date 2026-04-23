@@ -37,7 +37,6 @@ body {
   width: 100vw;
 }
 
-/* Sidebar */
 .sidebar {
   width: 280px;
   background-color: var(--bg-sidebar);
@@ -159,7 +158,6 @@ body {
   background-color: var(--bg-hover);
 }
 
-/* Main Area */
 .main-area {
   flex: 1;
   display: flex;
@@ -217,7 +215,6 @@ body {
   cursor: pointer;
 }
 
-/* Chat Container */
 .chat-container {
   flex: 1;
   overflow-y: auto;
@@ -236,7 +233,6 @@ body {
   gap: 32px;
 }
 
-/* Welcome Screen */
 .welcome-screen {
   width: 100%;
   max-width: 800px;
@@ -300,7 +296,6 @@ body {
   justify-content: center;
 }
 
-/* Message Styles */
 .message {
   display: flex;
   gap: 16px;
@@ -346,7 +341,6 @@ body {
   gap: 4px;
 }
 
-/* Typing Indicator */
 .typing-indicator {
   display: flex;
   align-items: center;
@@ -376,7 +370,6 @@ body {
   40% { transform: scale(1); }
 }
 
-/* Input Area */
 .input-area {
   padding: 16px 24px 24px;
   display: flex;
@@ -461,7 +454,6 @@ body {
   text-decoration: underline;
 }
 
-/* Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
 }
@@ -475,7 +467,6 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #555;
 }
-/* Time Controls Layout */
 .time-controls {
   display: flex;
   align-items: center;
@@ -515,7 +506,6 @@ body {
   cursor: pointer;
 }
 
-/* Chart Styles */
 .chart-wrapper {
   margin-top: 24px;
   background: var(--bg-sidebar);
@@ -542,7 +532,6 @@ body {
   color: var(--text-secondary);
 }
 
-/* Markdown Styling */
 .message-content h3 { margin-top: 20px; color: var(--accent); }
 .message-content h4 { margin-top: 15px; color: #fff; }
 .message-content blockquote {
