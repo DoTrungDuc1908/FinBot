@@ -67,29 +67,42 @@ def ingest_pdf(pdf_path: str, ticker: str, report_type: str = "financial") -> in
         logger.info(f"Ingested {len(docs)} chunks from {pdf_path} for {ticker}")
         return len(docs)
     except Exception as e:
-        logger.error(f"PDF ingestion error: {e}")
+        # THÊM MỚI: In ra chi tiết Traceback nếu file PDF lỗi hoặc ChromaDB từ chối
+        logger.exception(f"LỖI NGHIÊM TRỌNG khi nạp PDF {pdf_path} cho mã {ticker}:")
         return 0
 
 
+# tools/rag_tools.py
+
 def ingest_text(text: str, ticker: str, source: str, report_type: str = "analyst") -> int:
     """Ingest raw text into the vector store."""
-    words = text.split()
-    chunk_size = 400
-    overlap = 40
-    chunks, i = [], 0
-    while i < len(words):
-        chunks.append(" ".join(words[i: i + chunk_size]))
-        i += chunk_size - overlap
+    try:
+        # Làm sạch text đầu vào
+        text = text.strip()
+        if not text: return 0
 
-    docs = [
-        Document(
-            page_content=chunk,
-            metadata={"ticker": ticker.upper(), "report_type": report_type, "source": source, "chunk_index": idx},
-        )
-        for idx, chunk in enumerate(chunks)
-    ]
-    add_documents(settings.chroma_collection_reports, docs)
-    return len(docs)
+        words = text.split()
+        chunk_size = 400
+        overlap = 40
+        chunks, i = [], 0
+        while i < len(words):
+            chunks.append(" ".join(words[i: i + chunk_size]))
+            i += chunk_size - overlap
+
+        docs = [
+            Document(
+                page_content=chunk.strip(),
+                metadata={"ticker": ticker.upper(), "report_type": report_type, "source": source, "chunk_index": idx},
+            )
+            for idx, chunk in enumerate(chunks) if chunk.strip()
+        ]
+        
+        # CẬP NHẬT: Nhận số lượng thực tế từ core/vector_store.py
+        actual_chunks = add_documents(settings.chroma_collection_reports, docs)
+        return actual_chunks
+    except Exception as e:
+        logger.exception(f"LỖI NGHIÊM TRỌNG khi nạp Text cho mã {ticker}:")
+        return 0
 
 
 # ── LangChain Tools ───────────────────────────────────────────────────────────
@@ -108,11 +121,11 @@ def search_financial_reports(ticker: str, query: str, k: int = 5) -> str:
     Returns:
         JSON danh sách các đoạn văn liên quan từ báo cáo tài chính.
     """
-    cache_key = CacheClient.build_key("rag_fin", ticker.upper(), CacheClient.hash_key(query))
-    if (hit := cache.get(cache_key)):
-        return json.dumps(hit, ensure_ascii=False)
-
     try:
+        cache_key = CacheClient.build_key("rag_fin", ticker.upper(), CacheClient.hash_key(query))
+        if (hit := cache.get(cache_key)):
+            return json.dumps(hit, ensure_ascii=False)
+
         docs = similarity_search(
             collection_name=settings.chroma_collection_reports,
             query=f"{ticker} {query}",
@@ -132,8 +145,9 @@ def search_financial_reports(ticker: str, query: str, k: int = 5) -> str:
         cache.set(cache_key, result, ttl=3600)
         return json.dumps(result, ensure_ascii=False, indent=2)
     except Exception as e:
-        logger.error(f"RAG search error: {e}")
-        return json.dumps({"error": str(e), "ticker": ticker, "query": query})
+        # THÊM MỚI: In Traceback và trả về JSON lỗi cho LLM xử lý
+        logger.exception(f"LỖI RAG (search_financial_reports) cho mã {ticker}:")
+        return json.dumps({"error": f"Lỗi truy xuất Báo cáo tài chính: {str(e)}", "ticker": ticker, "query": query}, ensure_ascii=False)
 
 
 @tool
@@ -150,11 +164,11 @@ def search_analyst_reports(ticker: str, query: str, k: int = 5) -> str:
     Returns:
         JSON danh sách các đoạn văn từ báo cáo phân tích của CTCK.
     """
-    cache_key = CacheClient.build_key("rag_ana", ticker.upper(), CacheClient.hash_key(query))
-    if (hit := cache.get(cache_key)):
-        return json.dumps(hit, ensure_ascii=False)
-
     try:
+        cache_key = CacheClient.build_key("rag_ana", ticker.upper(), CacheClient.hash_key(query))
+        if (hit := cache.get(cache_key)):
+            return json.dumps(hit, ensure_ascii=False)
+
         docs = similarity_search(
             collection_name=settings.chroma_collection_reports,
             query=f"{ticker} {query}",
@@ -173,8 +187,9 @@ def search_analyst_reports(ticker: str, query: str, k: int = 5) -> str:
         cache.set(cache_key, result, ttl=3600)
         return json.dumps(result, ensure_ascii=False, indent=2)
     except Exception as e:
-        logger.error(f"Analyst RAG search error: {e}")
-        return json.dumps({"error": str(e), "ticker": ticker, "query": query})
+        # THÊM MỚI: In Traceback và trả về JSON lỗi cho LLM xử lý
+        logger.exception(f"LỖI RAG (search_analyst_reports) cho mã {ticker}:")
+        return json.dumps({"error": f"Lỗi truy xuất Báo cáo phân tích: {str(e)}", "ticker": ticker, "query": query}, ensure_ascii=False)
 
 
 @tool
@@ -202,4 +217,6 @@ def list_available_reports(ticker: Optional[str] = None) -> str:
         })
         return json.dumps({"available_reports": sources, "count": len(sources)}, ensure_ascii=False)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        # THÊM MỚI: Bổ sung logger.exception thay vì âm thầm trả về lỗi
+        logger.exception("LỖI NGHIÊM TRỌNG khi lấy danh sách báo cáo (list_available_reports):")
+        return json.dumps({"error": f"Lỗi liệt kê báo cáo: {str(e)}"}, ensure_ascii=False)

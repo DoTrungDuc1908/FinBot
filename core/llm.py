@@ -1,30 +1,26 @@
 """
 core/llm.py
 LLM client factory targeting NVIDIA NIM (OpenAI-compatible endpoint).
+Hỗ trợ Dynamic Model Selection (Đổi model theo Agent).
 """
 from functools import lru_cache
 from langchain_openai import ChatOpenAI
 from config.settings import settings
 
 class SingleToolChatOpenAI(ChatOpenAI):
-    """
-    Custom wrapper cho ChatOpenAI để tắt tính năng Parallel Tool Calling.
-    Bắt buộc áp dụng cho các model Llama/NVIDIA NIM không hỗ trợ tính năng này.
-    """
     def bind_tools(self, tools, **kwargs):
-        # Ép buộc tắt parallel tool calls ở mọi agent sử dụng LLM này
         kwargs["parallel_tool_calls"] = False
         return super().bind_tools(tools, **kwargs)
 
-@lru_cache(maxsize=1)
-def get_llm(temperature: float = 0.1, max_tokens: int | None = None) -> ChatOpenAI:
+# Tăng maxsize để cache lại nhiều loại model khác nhau thay vì chỉ 1
+@lru_cache(maxsize=5)
+def get_llm(temperature: float = 0.1, max_tokens: int | None = None, model_name: str | None = None) -> ChatOpenAI:
     """
-    Return a cached ChatOpenAI instance pointed at NVIDIA NIM.
-    Uses low temperature by default for factual financial answers.
+    Khởi tạo LLM cho các Agent cơ bản và phức tạp.
     """
-    # Sử dụng class custom thay vì ChatOpenAI gốc
+    target_model = model_name or settings.nvidia_llm_model
     return SingleToolChatOpenAI(
-        model=settings.nvidia_llm_model,
+        model=target_model,
         api_key=settings.nvidia_api_key,
         base_url=settings.nvidia_base_url,
         temperature=temperature,
@@ -32,18 +28,16 @@ def get_llm(temperature: float = 0.1, max_tokens: int | None = None) -> ChatOpen
         streaming=True,
     )
 
-def get_fast_llm() -> ChatOpenAI:
+def get_fast_llm(max_tokens: int | None = 2048, model_name: str | None = None) -> ChatOpenAI:
     """
-    Lightweight LLM for intent classification / routing tasks.
-    Uses llama-3.1-8b if available, otherwise falls back to main model.
+    Khởi tạo LLM tốc độ cao cho Router và Data Evaluation.
     """
-    fast_model = "meta/llama-3.1-8b-instruct"
-    # Tương tự, áp dụng cho cả fast_llm
+    target_model = model_name or settings.nvidia_router_model
     return SingleToolChatOpenAI(
-        model=fast_model,
+        model=target_model,
         api_key=settings.nvidia_api_key,
         base_url=settings.nvidia_base_url,
         temperature=0.0,
-        max_tokens=256,
+        max_tokens=max_tokens,
         streaming=False,
     )

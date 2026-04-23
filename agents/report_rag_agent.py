@@ -1,42 +1,41 @@
-"""
-agents/report_rag_agent.py
-Agent RAG tổng hợp báo cáo tài chính và báo cáo phân tích CTCK.
-"""
-from langchain.agents import create_agent # Sử dụng hàm tạo agent tiêu chuẩn mới
+from langchain.agents import create_agent
+from loguru import logger
+
 from core.llm import get_llm
+from config.settings import settings
 from tools.rag_tools import search_financial_reports, search_analyst_reports, list_available_reports
+
+from tools.stock_tools import get_financial_fundamentals 
 
 RAG_SYSTEM = """Bạn là chuyên gia phân tích báo cáo tài chính và báo cáo CTCK Việt Nam.
 
-Nguồn thông tin bạn có quyền truy cập:
-- Báo cáo tài chính (BCTC): Doanh thu, lợi nhuận, tài sản, nợ, EPS, ROE, ROA, P/E.
-- Báo cáo phân tích CTCK: SSI Research, VCSC, MBS, BSC — khuyến nghị, giá mục tiêu.
+Quy trình làm việc BẮT BUỘC:
+1. LUÔN sử dụng công cụ `get_financial_fundamentals` ĐẦU TIÊN để lấy các chỉ số nền tảng (P/E, ROE, EPS...).
+2. NẾU BƯỚC 1 KHÔNG CÓ DỮ LIỆU (hoặc dữ liệu rỗng), BẠN BẮT BUỘC phải sử dụng `search_financial_reports` để tìm kiếm thông tin "Báo cáo Kết quả Kinh doanh", "Doanh thu", "Lợi nhuận" từ cơ sở dữ liệu nội bộ (RAG).
+3. Đọc hiểu các số liệu hàng/cột trong Markdown và đưa ra đánh giá: Doanh nghiệp đang tăng trưởng hay đi lùi? Lợi nhuận qua các năm biến động ra sao?
 
 Quy tắc:
-1. Luôn dùng tools để tìm kiếm thông tin, không tự tạo số liệu.
-2. Trích dẫn nguồn rõ ràng (tên file báo cáo).
-3. Nếu không tìm thấy dữ liệu, thông báo rõ ràng thay vì đoán mò.
-4. So sánh các chỉ số với trung bình ngành nếu có dữ liệu.
-5. Phân tích xu hướng theo thời gian nếu có nhiều kỳ dữ liệu.
+- Trích dẫn nguồn rõ ràng (từ API hoặc từ tên file báo cáo RAG).
+- Phân tích sâu sắc sự thay đổi của các con số, không chỉ liệt kê.
+- Trình bày kết quả dưới dạng thẻ Markdown, tô đậm các con số quan trọng.
 
-Trả lời bằng tiếng Việt, có cấu trúc rõ ràng với các mục tiêu đề."""
+Trả lời bằng tiếng Việt, logic, mạch lạc."""
 
-# Danh sách các công cụ RAG
-_TOOLS = [search_financial_reports, search_analyst_reports, list_available_reports]
+_TOOLS = [
+    get_financial_fundamentals, 
+    search_financial_reports, 
+    search_analyst_reports, 
+    list_available_reports
+]
 
 def create_report_rag_agent():
-    """Khởi tạo Report RAG Agent bằng hàm create_agent hiện đại."""
-    # Giữ temperature thấp để đảm bảo dữ liệu trích xuất chính xác
-    llm = get_llm(temperature=0.1)
-    
-    # create_agent xử lý logic tool-calling thay cho AgentExecutor
+    llm = get_llm(temperature=0.1, model_name=settings.nvidia_advisor_model)
     return create_agent(
         model=llm,
         tools=_TOOLS,
         system_prompt=RAG_SYSTEM
     )
 
-# Singleton Pattern
 _agent = None
 
 def get_report_rag_agent():
@@ -46,13 +45,14 @@ def get_report_rag_agent():
     return _agent
 
 def run_report_rag_agent(query: str) -> str:
-    """Thực thi RAG agent để tra cứu báo cáo tài chính."""
-    agent = get_report_rag_agent()
-    
-    # Cấu trúc input mới sử dụng "messages" thay vì "input"
-    result = agent.invoke({
-        "messages": [("user", query)]
-    })
-    
-    # Trích xuất phản hồi cuối cùng từ danh sách messages trả về
-    return result["messages"][-1].content
+    try:
+        logger.debug(f"Đang thực thi RAG truy xuất báo cáo tài chính: '{query}'")
+        agent = get_report_rag_agent()
+        result = agent.invoke({
+            "messages": [("user", query)]
+        })
+        logger.success("Truy xuất dữ liệu báo cáo tài chính thành công.")
+        return result["messages"][-1].content
+    except Exception as e:
+        logger.error(f"Lỗi khi chạy Report RAG Agent: {str(e)}")
+        return f"**Thông báo:** Quá trình tra cứu dữ liệu cơ bản hiện đang bị gián đoạn. *(Lỗi: {str(e)})*"

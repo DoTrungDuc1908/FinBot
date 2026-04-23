@@ -74,7 +74,7 @@ def _fetch_price_vnstock(ticker: str, start: str, end: str) -> list[dict]:
         
         return df[["date", "open", "high", "low", "close", "volume"]].to_dict(orient="records")
     except Exception as e:
-        logger.error(f"vnstock fetch error for {ticker}: {e}")
+        logger.exception(f"LỖI NGHIÊM TRỌNG khi lấy dữ liệu giá vnstock cho {ticker}:")
         return []
 
 
@@ -82,7 +82,9 @@ def _fetch_company_tcbs(ticker: str) -> dict:
     """Fetch company overview from TCBS."""
     url = f"{settings.tcbs_base_url}/stock-insight/v2/stock/ticker/{ticker.upper()}/company"
     try:
-        resp = requests.get(url, timeout=10)
+        # Lấy timeout từ settings, mặc định 10s
+        timeout_val = getattr(settings, "request_timeout", 10)
+        resp = requests.get(url, timeout=timeout_val)
         resp.raise_for_status()
         data = resp.json()
         return {
@@ -95,7 +97,7 @@ def _fetch_company_tcbs(ticker: str) -> dict:
             "description": data.get("businessStrategy", "")[:500],
         }
     except Exception as e:
-        logger.warning(f"TCBS company fetch failed for {ticker}: {e}")
+        logger.exception(f"LỖI NGHIÊM TRỌNG khi lấy thông tin công ty từ TCBS cho {ticker}:")
         return {}
 
 
@@ -110,19 +112,22 @@ def get_company_info(ticker: str) -> str:
     Args:
         ticker: Mã chứng khoán Việt Nam (VD: VNM, VIC, HPG).
     """
-    key = CacheClient.build_key("company", ticker.upper())
-    cached_val = cache.get(key)
-    if cached_val:
-        logger.debug(f"Cache HIT: company info {ticker}")
-        return json.dumps(cached_val, ensure_ascii=False)
+    try:
+        key = CacheClient.build_key("company", ticker.upper())
+        cached_val = cache.get(key)
+        if cached_val:
+            logger.debug(f"Cache HIT: company info {ticker}")
+            return json.dumps(cached_val, ensure_ascii=False)
 
-    info = _fetch_company_tcbs(ticker)
-    if not info:
-        # Fallback: return minimal structure
-        info = {"ticker": ticker.upper(), "error": "Không tìm thấy dữ liệu doanh nghiệp"}
+        info = _fetch_company_tcbs(ticker)
+        if not info:
+            info = {"ticker": ticker.upper(), "error": "Không tìm thấy dữ liệu doanh nghiệp từ nguồn API."}
 
-    cache.set(key, info, ttl=settings.cache_ttl_company)
-    return json.dumps(info, ensure_ascii=False, indent=2)
+        cache.set(key, info, ttl=settings.cache_ttl_company)
+        return json.dumps(info, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.exception(f"Lỗi Tool get_company_info cho mã {ticker}:")
+        return json.dumps({"error": f"Lỗi lấy thông tin công ty: {str(e)}"}, ensure_ascii=False)
 
 
 @tool
@@ -140,29 +145,46 @@ def get_price_history(
         start_date: Ngày bắt đầu định dạng YYYY-MM-DD (tùy chọn).
         end_date: Ngày kết thúc định dạng YYYY-MM-DD (tùy chọn).
         period: Khung thời gian: '1w', '1m', '3m', '6m', '1y', 'ytd'.
-                Nếu có period, start_date/end_date sẽ bị bỏ qua.
-
-    Returns:
-        JSON danh sách ngày giao dịch với open, high, low, close, volume.
     """
-    start, end = _resolve_dates(period, start_date, end_date)
-    key = CacheClient.build_key("price", ticker.upper(), start, end)
-    cached_val = cache.get(key)
-    if cached_val:
-        logger.debug(f"Cache HIT: price {ticker} {start}-{end}")
-        return json.dumps(cached_val, ensure_ascii=False)
+    try:
+        # 1. Ưu tiên tuyệt đối start_date và end_date
+        if start_date and end_date:
+            start = start_date
+            end = end_date
+        else:
+            start, end = _resolve_dates(period, start_date, end_date)
 
-    records = _fetch_price_vnstock(ticker, start, end)
-    result = {
-        "ticker": ticker.upper(),
-        "start": start,
-        "end": end,
-        "count": len(records),
-        "data": records,
-    }
-    ttl = settings.cache_ttl_price if not period or period in ("1w",) else 3600
-    cache.set(key, result, ttl=ttl)
-    return json.dumps(result, ensure_ascii=False, indent=2)
+        # 2. LỚP BẢO VỆ: Đảo chiều nếu AI lỡ truyền start > end
+        import pandas as pd
+        if pd.to_datetime(start) > pd.to_datetime(end):
+            start, end = end, start 
+
+        key = CacheClient.build_key("price", ticker.upper(), start, end)
+        cached_val = cache.get(key)
+        if cached_val:
+            logger.debug(f"Cache HIT: price {ticker} {start}-{end}")
+            return json.dumps(cached_val, ensure_ascii=False)
+
+        # 3. Kéo dữ liệu
+        records = _fetch_price_vnstock(ticker, start, end)
+        
+        # 4. Kiểm tra dữ liệu rỗng
+        if not records:
+            return json.dumps({"error": f"Không có dữ liệu giá giao dịch cho mã {ticker} từ {start} đến {end}."}, ensure_ascii=False)
+
+        result = {
+            "ticker": ticker.upper(),
+            "start": start,
+            "end": end,
+            "count": len(records),
+            "data": records,
+        }
+        ttl = settings.cache_ttl_price if not period or period in ("1w",) else 3600
+        cache.set(key, result, ttl=ttl)
+        return json.dumps(result, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.exception(f"Lỗi Tool get_price_history cho mã {ticker}:")
+        return json.dumps({"error": f"Lỗi lấy dữ liệu giá lịch sử: {str(e)}"}, ensure_ascii=False)
 
 
 @tool
@@ -171,15 +193,17 @@ def get_market_overview() -> str:
     Lấy tổng quan thị trường chứng khoán Việt Nam:
     VN-Index, HNX-Index, UPCOM-Index (điểm số và % thay đổi hôm nay).
     """
-    key = CacheClient.build_key("market", "overview")
-    cached_val = cache.get(key)
-    if cached_val:
-        return json.dumps(cached_val, ensure_ascii=False)
-
-    url = f"{settings.tcbs_base_url}/stock-insight/v2/market/index"
     try:
-        resp = requests.get(url, timeout=10)
+        key = CacheClient.build_key("market", "overview")
+        cached_val = cache.get(key)
+        if cached_val:
+            return json.dumps(cached_val, ensure_ascii=False)
+
+        url = f"{settings.tcbs_base_url}/stock-insight/v2/market/index"
+        timeout_val = getattr(settings, "request_timeout", 10)
+        resp = requests.get(url, timeout=timeout_val)
         resp.raise_for_status()
+        
         raw = resp.json()
         indices = [
             {
@@ -194,6 +218,70 @@ def get_market_overview() -> str:
         result = {"indices": indices, "as_of": datetime.now().strftime("%Y-%m-%d %H:%M")}
         cache.set(key, result, ttl=120)
         return json.dumps(result, ensure_ascii=False, indent=2)
+        
     except Exception as e:
-        logger.error(f"Market overview fetch error: {e}")
-        return json.dumps({"error": str(e)}, ensure_ascii=False)
+        logger.exception("LỖI Tool get_market_overview:")
+        return json.dumps({"error": f"Hệ thống không thể kết nối tới nguồn cấp dữ liệu thị trường (Lỗi: {str(e)})"}, ensure_ascii=False)
+    
+def _fetch_fundamentals_tcbs(ticker: str) -> dict:
+    """Lấy chỉ số tài chính cơ bản từ TCBS."""
+    url = f"{settings.tcbs_base_url}/stock-insight/v1/stock/financial-analysis?ticker={ticker.upper()}&yearly=0"
+    try:
+        timeout_val = getattr(settings, "request_timeout", 10)
+        resp = requests.get(url, timeout=timeout_val)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        if "data" in data and len(data["data"]) > 0:
+            latest = data["data"][0]
+            return {
+                "period": f"Q{latest.get('quarter')}/{latest.get('year')}",
+                "eps": latest.get("eps", 0),
+                "pe": latest.get("pe", 0),
+                "pb": latest.get("pb", 0),
+                "roe": round(latest.get("roe", 0) * 100, 2),
+                "roa": round(latest.get("roa", 0) * 100, 2),
+                "debt_to_equity": round(latest.get("debtEquity", 0), 2),
+            }
+        return {}
+    except Exception as e:
+        logger.warning(f"Lỗi lấy TCBS Fundamentals cho {ticker}: {e}")
+        return {}
+
+@tool
+def get_financial_fundamentals(ticker: str) -> str:
+    """
+    Lấy các chỉ số tài chính và định giá cơ bản (P/E, P/B, ROE, ROA, EPS) của một công ty.
+    Sử dụng tool này đầu tiên khi người dùng hỏi về "định giá", "tình hình tài chính", "lợi nhuận" hoặc "chỉ số cơ bản".
+
+    Args:
+        ticker: Mã chứng khoán (VD: VNM, VIC).
+    """
+    try:
+        key = CacheClient.build_key("fundamentals", ticker.upper())
+        if (hit := cache.get(key)):
+            return json.dumps(hit, ensure_ascii=False)
+
+        data = _fetch_fundamentals_tcbs(ticker)
+        if not data:
+            return json.dumps({"error": f"Không tìm thấy số liệu tài chính cơ bản cho {ticker}."}, ensure_ascii=False)
+
+        md_report = f"### 📊 Số liệu Tài chính Cơ bản ({ticker.upper()} - {data['period']})\n"
+        md_report += f"- **EPS (Lợi nhuận trên mỗi CP):** {data['eps']:,} VNĐ\n"
+        md_report += f"- **P/E (Hệ số Giá/Lợi nhuận):** {data['pe']}\n"
+        md_report += f"- **P/B (Hệ số Giá/Sổ sách):** {data['pb']}\n"
+        md_report += f"- **ROE (Tỷ suất LN/Vốn CSH):** {data['roe']}%\n"
+        md_report += f"- **ROA (Tỷ suất LN/Tổng Tài sản):** {data['roa']}%\n"
+        md_report += f"- **Tỷ lệ Nợ/Vốn CSH:** {data['debt_to_equity']} lần\n"
+
+        result = {
+            "ticker": ticker.upper(),
+            "data": data,
+            "markdown": md_report
+        }
+        
+        cache.set(key, result, ttl=86400)
+        return json.dumps(result, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.exception(f"Lỗi Tool get_financial_fundamentals cho {ticker}:")
+        return json.dumps({"error": f"Lỗi truy xuất dữ liệu: {str(e)}"}, ensure_ascii=False)

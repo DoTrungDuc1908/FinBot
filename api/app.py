@@ -38,15 +38,20 @@ app.add_middleware(
 
 class ChatRequest(BaseModel):
     question: str = Field(..., min_length=3, max_length=2000, description="Câu hỏi của người dùng")
-    risk_profile: Optional[str] = Field("trung bình", description="Khẩu vị rủi ro: thấp / trung bình / cao")
-    session_id: Optional[str] = Field(None, description="Session ID để theo dõi hội thoại")
+    risk_profile: Optional[str] = Field("trung bình", description="Khẩu vị rủi ro")
+    session_id: Optional[str] = Field(None, description="Session ID")
+    # THÊM MỚI: Nhận tham số thời gian
+    start_date: Optional[str] = Field(None, description="Ngày bắt đầu (YYYY-MM-DD)")
+    end_date: Optional[str] = Field(None, description="Ngày kết thúc (YYYY-MM-DD)")
+    interval: Optional[str] = Field("1D", description="Khung thời gian (1D, 1W, 1M)")
 
 
 class ChatResponse(BaseModel):
     answer: str
     session_id: Optional[str]
     latency_ms: int
-
+    chart_metadata: Optional[dict] = Field(default=None, description="Siêu dữ liệu để Frontend vẽ biểu đồ")
+    news_metadata: Optional[dict] = Field(default=None, description="Dữ liệu vẽ thẻ tin tức")
 
 class HealthResponse(BaseModel):
     status: str
@@ -71,15 +76,6 @@ async def health_check():
 
 @app.post("/chat", response_model=ChatResponse, tags=["Chat"])
 async def chat(request: ChatRequest):
-    """
-    Gửi câu hỏi đến hệ thống multi-agent FinBot.
-
-    **Ví dụ câu hỏi:**
-    - "Thông tin công ty VNM?"
-    - "Phân tích RSI 14 ngày của HPG trong 3 tháng gần nhất"
-    - "Có nên mua VIC không? Khẩu vị rủi ro của tôi là thấp"
-    - "Tình hình tài chính của TCB trong năm 2023"
-    """
     start = time.perf_counter()
     question = request.question
     if request.risk_profile and request.risk_profile != "trung bình":
@@ -87,14 +83,25 @@ async def chat(request: ChatRequest):
 
     try:
         logger.info(f"[{request.session_id}] Q: {request.question[:80]}")
-        answer = run_supervisor(question)
+        
+        # Gọi luồng xử lý chính
+        bot_response = await run_supervisor(
+            question=question,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            interval=request.interval
+        ) 
+        
         latency = int((time.perf_counter() - start) * 1000)
-        logger.info(f"[{request.session_id}] Done in {latency}ms")
+        
         return ChatResponse(
-            answer=answer,
+            answer=bot_response.get("answer", "Xin lỗi, đã có lỗi xảy ra khi tạo câu trả lời."),
             session_id=request.session_id,
             latency_ms=latency,
+            chart_metadata=bot_response.get("chart_metadata"),
+            news_metadata=bot_response.get("news_metadata") # Trả về an toàn
         )
+        
     except Exception as e:
         logger.error(f"Chat error: {e}")
         raise HTTPException(status_code=500, detail=f"Lỗi hệ thống: {str(e)}")
@@ -135,25 +142,57 @@ async def get_stock_price(
 
 
 @app.get("/stock/{ticker}/technical", tags=["Technical"])
-async def get_technical(ticker: str, indicator: str = "rsi", window: int = 14, period: str = "6m"):
-    """
-    Tính chỉ số kỹ thuật. indicator: sma / rsi / macd / bbands.
-    """
+async def get_technical(
+    ticker: str, 
+    indicator: str = "rsi", 
+    window: int = 14, 
+    period: str = "1y",
+    start: Optional[str] = None,
+    end: Optional[str] = None,   
+    interval: str = "1D",        
+    full_data: bool = True
+):
     from tools.technical_tools import calculate_sma, calculate_rsi, calculate_macd, calculate_bollinger_bands
+    import json
+    
     tool_map = {
-        "sma": (calculate_sma, {"ticker": ticker, "window": window, "period": period}),
-        "rsi": (calculate_rsi, {"ticker": ticker, "window": window, "period": period}),
-        "macd": (calculate_macd, {"ticker": ticker, "period": period}),
-        "bbands": (calculate_bollinger_bands, {"ticker": ticker, "window": window, "period": period}),
+        "sma": (calculate_sma, {"ticker": ticker, "window": window, "period": period, "start_date": start, "end_date": end, "interval": interval, "full_data": full_data}),
+        "rsi": (calculate_rsi, {"ticker": ticker, "window": window, "period": period, "start_date": start, "end_date": end, "interval": interval, "full_data": full_data}),
+        "macd": (calculate_macd, {"ticker": ticker, "period": period, "start_date": start, "end_date": end, "interval": interval, "full_data": full_data}),
+        "bbands": (calculate_bollinger_bands, {"ticker": ticker, "window": window, "period": period, "start_date": start, "end_date": end, "interval": interval, "full_data": full_data}),
     }
-    if indicator.lower() not in tool_map:
-        raise HTTPException(status_code=400, detail=f"Indicator không hợp lệ. Chọn: {list(tool_map.keys())}")
-    tool_fn, kwargs = tool_map[indicator.lower()]
-    try:
-        result = tool_fn.invoke(kwargs)
-        return JSONResponse(content={"ticker": ticker.upper(), "indicator": indicator, "data": result})
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    
+    # Hỗ trợ nhận nhiều chỉ báo cách nhau bằng dấu phẩy
+    indicators = [i.strip().lower() for i in indicator.split(',') if i.strip().lower() in tool_map]
+    if not indicators:
+        raise HTTPException(status_code=400, detail="Indicator không hợp lệ.")
+        
+    merged_history = {}
+    
+    for ind in indicators:
+        tool_fn, kwargs = tool_map[ind]
+        try:
+            result_str = tool_fn.invoke(kwargs)
+            result_json = json.loads(result_str)
+            if "error" in result_json: continue
+            
+            hist = result_json.get("history_data", [])
+            if isinstance(hist, list):
+                for row in hist:
+                    d = row["date"]
+                    # Khởi tạo ngày nếu chưa có
+                    if d not in merged_history:
+                        merged_history[d] = {"date": d, "close": row.get("close")}
+                    
+                    # Gộp các cột chỉ báo vào chung 1 ngày
+                    for k, v in row.items():
+                        if k not in ["date", "close"]:
+                            merged_history[d][k] = v
+        except Exception as e:
+            pass # Bỏ qua nếu có 1 chỉ báo lỗi để các chỉ báo khác vẫn vẽ được
+            
+    final_data = sorted(list(merged_history.values()), key=lambda x: x["date"])
+    return JSONResponse(content={"ticker": ticker.upper(), "indicators": indicators, "data": {"history_data": final_data}})
 
 
 @app.get("/stock/{ticker}/sentiment", tags=["Sentiment"])

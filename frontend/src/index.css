@@ -475,3 +475,80 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #555;
 }
+/* Time Controls Layout */
+.time-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+  width: 100%;
+}
+
+.time-controls .input-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-main);
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.time-controls input[type="date"] {
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+
+.interval-select {
+  background: var(--bg-main);
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 4px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Chart Styles */
+.chart-wrapper {
+  margin-top: 24px;
+  background: var(--bg-sidebar);
+  padding: 24px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  width: 100%;
+}
+
+.chart-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.chart-title {
+  font-size: 16px;
+  color: var(--accent);
+  margin: 0;
+}
+
+.chart-period {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Markdown Styling */
+.message-content h3 { margin-top: 20px; color: var(--accent); }
+.message-content h4 { margin-top: 15px; color: #fff; }
+.message-content blockquote {
+  border-left: 4px solid var(--accent);
+  padding-left: 16px;
+  color: var(--text-secondary);
+  font-style: italic;
+  margin: 10px 0;
+}

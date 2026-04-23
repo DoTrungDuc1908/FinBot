@@ -1,27 +1,37 @@
 """
 agents/supervisor.py
-LangGraph Supervisor — intent classification, parallel dispatch, response synthesis.
+LangGraph Supervisor — intent classification (Structured Output), parallel dispatch (Async), response synthesis.
 """
 from __future__ import annotations
 
 import asyncio
 import re
-from concurrent.futures import ThreadPoolExecutor
-from typing import Any, TypedDict
+from typing import Any, TypedDict, List
+from pydantic import BaseModel, Field
+from aiolimiter import AsyncLimiter
+import json
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.output_parsers import StrOutputParser
+from langchain_core.output_parsers import JsonOutputParser # Thêm import này
 from langgraph.graph import StateGraph, END
 from loguru import logger
 
 from core.llm import get_fast_llm, get_llm
+from config.settings import settings
 from agents.stock_info_agent import run_stock_info_agent
 from agents.technical_agent import run_technical_agent
 from agents.sentiment_agent import run_sentiment_agent
 from agents.report_rag_agent import run_report_rag_agent
 from agents.advisor_agent import synthesize_investment_advice
 
-# ── Intent labels ─────────────────────────────────────────────────────────────
+# ── 1. Định nghĩa Schema cho Structured Output (THÊM MỚI) ─────────────────────
+class IntentClassification(BaseModel):
+    selected_agents: List[str] = Field(
+        description="Danh sách các agent cần gọi. Các giá trị hợp lệ bắt buộc lấy từ: stock_info, technical, sentiment, report_rag, advisor, market"
+    )
+
+# ── Intent labels & Prompts ───────────────────────────────────────────────────
 INTENTS = {
     "stock_info": "Thông tin công ty, giá cổ phiếu, lịch sử giá, OHLCV, volume, sàn, vốn hóa",
     "technical": "Phân tích kỹ thuật, SMA, RSI, MACD, Bollinger Bands, xu hướng, tín hiệu kỹ thuật",
@@ -31,19 +41,15 @@ INTENTS = {
     "market": "Thị trường chung, VN-Index, HNX, tổng quan thị trường",
 }
 
-CLASSIFY_PROMPT = """Bạn là bộ phân loại intent cho hệ thống tư vấn đầu tư.
-Phân loại câu hỏi vào MỘT HOẶC NHIỀU loại sau (dùng dấu phẩy):
+CLASSIFY_SYSTEM = """Bạn là bộ phân loại intent cho hệ thống tư vấn đầu tư.
+Nhiệm vụ của bạn là phân loại câu hỏi của người dùng vào MỘT HOẶC NHIỀU danh mục sau đây:
 - stock_info: {stock_info}
 - technical: {technical}
 - sentiment: {sentiment}
 - report_rag: {report_rag}
 - advisor: {advisor}
 - market: {market}
-
-Câu hỏi: {{question}}
-
-Chỉ trả về các nhãn, cách nhau bằng dấu phẩy. Ví dụ: technical,sentiment
-Không giải thích thêm.""".format(**INTENTS)
+""".format(**INTENTS)
 
 TICKER_PATTERN = re.compile(r'\b([A-Z]{2,5})\b')
 VN_TICKERS = {
@@ -53,29 +59,25 @@ VN_TICKERS = {
     "DBC", "REE", "PNJ", "KBC", "NVL", "PDR", "DXG", "KDH", "VPI", "AGR",
 }
 
+EXCLUDE_TICKERS = {
+    "SMA", "RSI", "EMA", "VNĐ", "VND", "USD", "ROE", "ROA", "EPS", "PE", "PB",
+    "XU", "CÓ", "LÀ", "VÀ", "MÀ", "THÌ", "TIN", "TỨC", "GIÁ", "MÃ", "CHỈ", "SỐ",
+    "MUA", "BÁN", "GIỮ", "XEM", "HAY", "NÊN", "LÃI", "LỖ", "CÁC"
+}
 
 def extract_ticker(text: str) -> str | None:
-    """Extract Vietnamese stock ticker from user text."""
     matches = TICKER_PATTERN.findall(text.upper())
     for m in matches:
-        if m in VN_TICKERS:
-            return m
-    # Return first 2-5 uppercase word if any
+        if m in VN_TICKERS: return m
     for m in matches:
-        if 2 <= len(m) <= 5 and m not in {"SMA", "RSI", "EMA", "VNĐ", "USD", "ROE", "ROA", "EPS"}:
-            return m
+        if len(m) == 3 and m not in EXCLUDE_TICKERS: return m
     return None
 
-
 def extract_risk_profile(text: str) -> str:
-    """Extract risk profile from user text."""
     text_lower = text.lower()
-    if any(k in text_lower for k in ["thấp", "an toàn", "bảo thủ", "ít rủi ro"]):
-        return "thấp"
-    if any(k in text_lower for k in ["cao", "rủi ro cao", "tích cực", "mạo hiểm"]):
-        return "cao"
+    if any(k in text_lower for k in ["thấp", "an toàn", "bảo thủ", "ít rủi ro"]): return "thấp"
+    if any(k in text_lower for k in ["cao", "rủi ro cao", "tích cực", "mạo hiểm"]): return "cao"
     return "trung bình"
-
 
 # ── LangGraph State ───────────────────────────────────────────────────────────
 
@@ -89,87 +91,168 @@ class SupervisorState(TypedDict):
     sentiment_result: str
     report_rag_result: str
     final_answer: str
+    chart_metadata: dict
+    start_date: str | None
+    end_date: str | None
+    interval: str
+    news_metadata: dict  # Thêm trường này
 
 
-# ── Graph Nodes ───────────────────────────────────────────────────────────────
+# ── Graph Nodes (Đã Cập Nhật) ─────────────────────────────────────────────────
 
 def classify_node(state: SupervisorState) -> SupervisorState:
-    """Classify user intent using fast LLM."""
+    """Classify user intent using fast LLM with Manual JSON Parsing."""
     question = state["question"]
     state["ticker"] = extract_ticker(question)
     state["risk_profile"] = extract_risk_profile(question)
 
-    prompt = CLASSIFY_PROMPT.replace("{question}", question)
-    llm = get_fast_llm()
+    # 1. Ép System Prompt phải nhắc mô hình trả về CHUẨN JSON
+    json_instructions = """
+BẮT BUỘC TRẢ VỀ ĐỊNH DẠNG JSON. KHÔNG VIẾT THÊM BẤT KỲ CHỮ NÀO KHÁC TRƯỚC HAY SAU JSON.
+Cấu trúc JSON bắt buộc:
+{
+  "selected_agents": ["stock_info", "technical"] 
+}
+"""
+    prompt = CLASSIFY_SYSTEM + json_instructions + f"\n\nCâu hỏi: {question}"
+    llm = get_fast_llm(model_name=settings.nvidia_router_model)
+    
     try:
-        raw = llm.invoke([HumanMessage(content=prompt)]).content.strip().lower()
-        intents = [i.strip() for i in raw.split(",") if i.strip() in INTENTS]
+        # 2. Không dùng with_structured_output nữa, lấy text thô và tự parse
+        raw_output = llm.invoke([HumanMessage(content=prompt)]).content.strip()
+        
+        # 3. Dọn dẹp text thừa (Llama hay kẹp JSON trong thẻ markdown ```json ... ```)
+        if raw_output.startswith("```json"):
+            raw_output = raw_output[7:]
+        if raw_output.endswith("```"):
+            raw_output = raw_output[:-3]
+        raw_output = raw_output.strip()
+
+        # 4. Tự Parse JSON
+        parsed_json = json.loads(raw_output)
+        
+        # 5. Kiểm tra và lọc intent
+        raw_intents = parsed_json.get("selected_agents", [])
+        if isinstance(raw_intents, list):
+            intents = [i.strip() for i in raw_intents if i.strip() in INTENTS]
+        else:
+            intents = ["stock_info"]
+            
     except Exception as e:
-        logger.warning(f"Intent classification failed: {e}, defaulting to stock_info")
+        logger.warning(f"Intent classification failed: {e}. Raw Output: {raw_output}")
         intents = ["stock_info"]
 
     if not intents:
         intents = ["stock_info"]
 
-    # If advisor is requested, ensure we have enough context
     if "advisor" in intents:
         for needed in ["stock_info", "technical", "sentiment"]:
-            if needed not in intents:
-                intents.append(needed)
+            if needed not in intents: intents.append(needed)
 
     state["intents"] = intents
     logger.info(f"Intents: {intents} | Ticker: {state['ticker']}")
     return state
 
 
-def dispatch_node(state: SupervisorState) -> SupervisorState:
-    """Dispatch to sub-agents in parallel using ThreadPoolExecutor."""
+# ── 2. Xử lý Rate Limit & Concurrency (THÊM MỚI) ──────────────────────────────
+# Token Bucket: Cho phép tối đa 2 requests mỗi 1 giây để chống lỗi 429
+rate_limiter = AsyncLimiter(max_rate=settings.llm_rate_limit, time_period=1)
+
+async def dispatch_node(state: SupervisorState) -> SupervisorState:
+    """Dispatch to sub-agents in PARALLEL with Async/Await and Rate Limiting."""
+    import json # Thêm import json để xử lý dữ liệu Sentiment
+    
     intents = state["intents"]
     question = state["question"]
     ticker = state["ticker"]
     ticker_prefix = f"[{ticker}] " if ticker else ""
 
+    time_context = ""
+    if state.get("start_date") and state.get("end_date"):
+        interval = state.get("interval", "1D")
+        time_context = f"\n[LƯU Ý: Chỉ lấy dữ liệu, tin tức và phân tích trong khoảng thời gian từ {state['start_date']} đến {state['end_date']}, khung {interval}]"
+    
+    full_query = f"{ticker_prefix}{question}{time_context}"
+
     tasks: dict[str, tuple] = {}
     if "stock_info" in intents or "market" in intents:
-        tasks["stock_info"] = (run_stock_info_agent, f"{ticker_prefix}{question}")
+        tasks["stock_info"] = (run_stock_info_agent, full_query)
     if "technical" in intents:
-        tasks["technical"] = (run_technical_agent, f"{ticker_prefix}{question}")
+        tasks["technical"] = (run_technical_agent, full_query)
     if "sentiment" in intents:
-        tasks["sentiment"] = (run_sentiment_agent, f"{ticker_prefix}{question}")
+        tasks["sentiment"] = (run_sentiment_agent, full_query)
     if "report_rag" in intents:
-        tasks["report_rag"] = (run_report_rag_agent, f"{ticker_prefix}{question}")
+        tasks["report_rag"] = (run_report_rag_agent, full_query)
 
     results: dict[str, str] = {
         "stock_info": "", "technical": "", "sentiment": "", "report_rag": ""
     }
 
-    def _run(key: str, fn, q: str) -> tuple[str, str]:
-        try:
-            return key, fn(q)
-        except Exception as e:
-            logger.error(f"Agent {key} error: {e}")
-            return key, f"[Lỗi: {e}]"
+    # Hàm bọc (wrapper) để chạy hàm đồng bộ (sync) trong luồng bất đồng bộ (async thread)
+    async def _run_bounded(key: str, fn, q: str):
+        async with rate_limiter: # Chờ Token Bucket cấp phép
+            try:
+                logger.info(f"Chạy Agent Song Song: {key}...")
+                # to_thread giúp không làm treo Event Loop của FastAPI
+                output = await asyncio.to_thread(fn, q)
+                return key, output
+            except Exception as e:
+                logger.error(f"Agent {key} error: {e}")
+                return key, f"[Thông báo: Hiện không thể lấy dữ liệu phần này do hệ thống bận. Lỗi: {e}]"
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {executor.submit(_run, k, fn, q): k for k, (fn, q) in tasks.items()}
-        for future in futures:
-            key, output = future.result(timeout=60)
-            results[key] = output
+    # Kích hoạt chạy tất cả các tasks cùng CÙNG MỘT LÚC (Parallel)
+    coroutines = [_run_bounded(key, fn, q_task) for key, (fn, q_task) in tasks.items()]
+    completed_results = await asyncio.gather(*coroutines)
 
+    for key, output in completed_results:
+        results[key] = output
+
+    # 1. Gán kết quả cho các Agent thông thường
     state["stock_info_result"] = results["stock_info"]
     state["technical_result"] = results["technical"]
-    state["sentiment_result"] = results["sentiment"]
     state["report_rag_result"] = results["report_rag"]
+    
+    # 2. XỬ LÝ ĐẶC BIỆT CHO SENTIMENT: Bóc tách JSON thành Markdown và Metadata
+    sentiment_raw = results["sentiment"]
+    try:
+        # Nếu chuỗi trả về có dấu hiệu là JSON
+        if sentiment_raw and sentiment_raw.strip().startswith("{"):
+            data = json.loads(sentiment_raw)
+            state["sentiment_result"] = data.get("markdown_report", "")
+            state["news_metadata"] = data.get("raw_data", None)
+        else:
+            state["sentiment_result"] = sentiment_raw
+            state["news_metadata"] = None
+    except Exception as e:
+        logger.warning(f"Lỗi parse JSON Sentiment trong dispatch_node: {e}")
+        state["sentiment_result"] = sentiment_raw
+        state["news_metadata"] = None
+    
     return state
 
 
-def synthesize_node(state: SupervisorState) -> SupervisorState:
-    """Synthesize final answer from sub-agent outputs."""
+async def synthesize_node(state: SupervisorState) -> SupervisorState:
+    """Synthesize final answer asynchronously."""
     intents = state["intents"]
+    ticker = state["ticker"]
 
-    # If advisor → structured investment report
+    if ticker and any(i in intents for i in ["stock_info", "technical", "advisor"]):
+        state["chart_metadata"] = {
+            "ticker": ticker.upper(),
+            "render_chart": True,
+            "default_indicator": "sma" if "technical" in intents else "price",
+            "default_period": "6m",
+            "start_date": state.get("start_date"), 
+            "end_date": state.get("end_date"),
+            "interval": state.get("interval", "1D")
+        }
+    else:
+        state["chart_metadata"] = {"render_chart": False}
+
     if "advisor" in intents and state["ticker"]:
-        answer = synthesize_investment_advice(
+        # Chạy hàm tổng hợp đồng bộ trong thread để không block
+        answer = await asyncio.to_thread(
+            synthesize_investment_advice,
             ticker=state["ticker"],
             stock_info=state["stock_info_result"],
             technical_analysis=state["technical_result"],
@@ -180,7 +263,6 @@ def synthesize_node(state: SupervisorState) -> SupervisorState:
         state["final_answer"] = answer
         return state
 
-    # Single-intent: return the relevant result directly
     if len(intents) == 1:
         key = intents[0]
         mapping = {
@@ -193,16 +275,11 @@ def synthesize_node(state: SupervisorState) -> SupervisorState:
         state["final_answer"] = mapping.get(key, "Không có kết quả.")
         return state
 
-    # Multi-intent: combine with LLM
     parts = []
-    if state["stock_info_result"]:
-        parts.append(f"**Thông tin cổ phiếu:**\n{state['stock_info_result']}")
-    if state["technical_result"]:
-        parts.append(f"**Phân tích kỹ thuật:**\n{state['technical_result']}")
-    if state["sentiment_result"]:
-        parts.append(f"**Tin tức & Sentiment:**\n{state['sentiment_result']}")
-    if state["report_rag_result"]:
-        parts.append(f"**Báo cáo tài chính:**\n{state['report_rag_result']}")
+    if state["stock_info_result"]: parts.append(f"**Thông tin cổ phiếu:**\n{state['stock_info_result']}")
+    if state["technical_result"]: parts.append(f"**Phân tích kỹ thuật:**\n{state['technical_result']}")
+    if state["sentiment_result"]: parts.append(f"**Tin tức & Sentiment:**\n{state['sentiment_result']}")
+    if state["report_rag_result"]: parts.append(f"**Báo cáo tài chính:**\n{state['report_rag_result']}")
 
     combined = "\n\n".join(parts)
     synthesis_prompt = (
@@ -210,9 +287,16 @@ def synthesize_node(state: SupervisorState) -> SupervisorState:
         f"Thông tin thu thập được:\n{combined}\n\n"
         "Hãy tổng hợp thành câu trả lời hoàn chỉnh, ngắn gọn bằng tiếng Việt."
     )
-    llm = get_llm(temperature=0.1)
-    chain = llm | StrOutputParser()
-    state["final_answer"] = chain.invoke([HumanMessage(content=synthesis_prompt)])
+    
+    try:
+        llm = get_llm(temperature=0.1, model_name=settings.nvidia_advisor_model)
+        chain = llm | StrOutputParser()
+        # Chạy ainvoke để hỗ trợ non-blocking FastAPI
+        state["final_answer"] = await chain.ainvoke([HumanMessage(content=synthesis_prompt)])
+    except Exception as e:
+        logger.error(f"Lỗi tổng hợp dữ liệu tại Synthesize Node: {e}")
+        state["final_answer"] = "Hệ thống tổng hợp ngôn ngữ đang quá tải. Dưới đây là thông tin thô thu thập được:\n\n" + combined
+    
     return state
 
 
@@ -234,35 +318,42 @@ def _build_graph() -> Any:
 
 _graph = None
 
-
 def get_supervisor() -> Any:
     global _graph
     if _graph is None:
         _graph = _build_graph()
     return _graph
 
-
-def run_supervisor(question: str) -> str:
-    """
-    Main entry point. Run the full supervisor pipeline.
-
-    Args:
-        question: User's natural language question in Vietnamese.
-
-    Returns:
-        Final answer string.
-    """
+# THAY ĐỔI QUAN TRỌNG: Đổi thành async def để chạy mượt trong FastAPI
+async def run_supervisor(question: str, start_date: str = None, end_date: str = None, interval: str = "1D") -> dict:
     supervisor = get_supervisor()
     initial_state: SupervisorState = {
         "question": question,
         "ticker": None,
         "risk_profile": "trung bình",
+        "start_date": start_date,
+        "end_date": end_date,
+        "interval": interval,
         "intents": [],
         "stock_info_result": "",
         "technical_result": "",
         "sentiment_result": "",
         "report_rag_result": "",
         "final_answer": "",
+        "chart_metadata": {}, 
     }
-    result = supervisor.invoke(initial_state)
-    return result.get("final_answer", "Xin lỗi, tôi không thể xử lý câu hỏi này.")
+    
+    try:
+        # Thay thế .invoke thành .ainvoke() để chạy toàn bộ StateGraph bất đồng bộ
+        result = await supervisor.ainvoke(initial_state)
+        return {
+            "answer": result.get("final_answer", "Xin lỗi, tôi không thể xử lý câu hỏi này."),
+            "chart_metadata": result.get("chart_metadata", {"render_chart": False}),
+            "news_metadata": result.get("news_metadata") # Trả về cho Frontend
+        }
+    except Exception as e:
+        logger.error(f"Fatal lỗi ở Supervisor: {e}")
+        return {
+            "answer": f"Hệ thống điều phối trung tâm hiện đang gặp sự cố. Vui lòng thử lại sau. Lỗi: {str(e)}",
+            "chart_metadata": {"render_chart": False}
+        }

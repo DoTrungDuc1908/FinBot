@@ -13,17 +13,13 @@ from loguru import logger
 
 from config.settings import settings
 from core.embeddings import get_embeddings
+import requests
 
 
 @lru_cache(maxsize=1)
-def _get_chroma_client() -> chromadb.HttpClient:
-    """Return a singleton ChromaDB HTTP client."""
-    client = chromadb.HttpClient(
-        host=settings.chroma_host,
-        port=settings.chroma_port,
-    )
-    logger.info(f"Connected to ChromaDB at {settings.chroma_host}:{settings.chroma_port}")
-    return client
+def _get_chroma_client():
+    # Thay vì dùng HttpClient, ta dùng PersistentClient để chạy cục bộ
+    return chromadb.PersistentClient(path="./chroma_data")
 
 
 def get_vector_store(collection_name: str) -> Chroma:
@@ -48,11 +44,58 @@ def get_news_store() -> Chroma:
     return get_vector_store(settings.chroma_collection_news)
 
 
-def add_documents(collection_name: str, docs: List[Document]) -> None:
-    """Add documents to a ChromaDB collection."""
+# core/vector_store.py
+
+# core/vector_store.py
+
+# core/vector_store.py
+
+def _get_nvidia_embedding_direct(text: str) -> List[float]:
+    """Gọi trực tiếp API NVIDIA để lấy embedding, tránh lỗi định dạng mảng."""
+    url = f"{settings.nvidia_base_url}/embeddings"
+    headers = {
+        "Authorization": f"Bearer {settings.nvidia_api_key}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "input": text, # Gửi string trực tiếp, không để trong [ ]
+        "model": "nvidia/nv-embedqa-e5-v5",
+        "input_type": "query"
+    }
+    
+    response = requests.post(url, headers=headers, json=payload)
+    if response.status_code != 200:
+        raise Exception(f"NVIDIA API Error {response.status_code}: {response.text}")
+    
+    return response.json()["data"][0]["embedding"]
+
+def add_documents(collection_name: str, docs: List[Document]) -> int:
+    """Nạp tài liệu vào ChromaDB bằng cách gọi trực tiếp API Embedding."""
+    if not docs:
+        return 0
+        
     store = get_vector_store(collection_name)
-    store.add_documents(docs)
-    logger.info(f"Added {len(docs)} documents to collection '{collection_name}'")
+    logger.info(f"Đang nạp {len(docs)} đoạn văn bản vào {collection_name} qua Direct API...")
+    
+    success_count = 0
+    for idx, doc in enumerate(docs):
+        try:
+            # 1. Lấy embedding trực tiếp (ép kiểu chuỗi)
+            vector = _get_nvidia_embedding_direct(doc.page_content)
+            
+            # 2. Nạp vào Chroma
+            store.add_texts(
+                texts=[doc.page_content],
+                metadatas=[doc.metadata],
+                embeddings=[vector]
+            )
+            success_count += 1
+        except Exception as e:
+            logger.error(f"Thất bại tại đoạn {idx} (Ticker: {doc.metadata.get('ticker')}): {e}")
+            continue
+            
+    logger.success(f"Hoàn tất! Đã nạp thành công {success_count}/{len(docs)} đoạn văn bản.")
+    return success_count
 
 
 def similarity_search(

@@ -3,9 +3,10 @@ agents/sentiment_agent.py
 Agent phân tích sentiment tin tức và tâm lý thị trường.
 """
 from langchain.agents import create_agent
-from langchain_core.prompts import ChatPromptTemplate
+from loguru import logger  # THÊM MỚI: Import thư viện ghi log
 
 from core.llm import get_llm
+from config.settings import settings
 from tools.news_tools import fetch_stock_news, analyze_stock_sentiment, get_market_news
 
 SENTIMENT_SYSTEM = """Bạn là chuyên gia phân tích tin tức và tâm lý thị trường chứng khoán Việt Nam.
@@ -28,16 +29,13 @@ _TOOLS = [fetch_stock_news, analyze_stock_sentiment, get_market_news]
 
 def create_sentiment_agent():
     # Sử dụng temperature thấp để đảm bảo tính khách quan
-    llm = get_llm(temperature=0.1)
+    llm = get_llm(temperature=0.0, model_name=settings.nvidia_agent_model)
     
-    # create_react_agent từ langgraph là cách tiêu chuẩn mới 
-    # thay thế cho AgentExecutor truyền thống
     return create_agent(
         model=llm,
         tools=_TOOLS,
         system_prompt=SENTIMENT_SYSTEM
     )
-    return agent
 
 _agent = None
 
@@ -48,10 +46,25 @@ def get_sentiment_agent():
     return _agent
 
 def run_sentiment_agent(query: str) -> str:
-    agent = get_sentiment_agent()
-    # Cách invoke của LangGraph hơi khác một chút
-    inputs = {"messages": [("user", query)]}
-    result = agent.invoke(inputs)
+    """Thực thi Sentiment Agent để đánh giá tâm lý thị trường/cổ phiếu."""
     
-    # Lấy phản hồi cuối cùng từ danh sách tin nhắn
-    return result["messages"][-1].content
+    try:
+        logger.debug(f"Đang thực thi Sentiment Agent phân tích tin tức: '{query}'")
+        agent = get_sentiment_agent()
+        
+        inputs = {"messages": [("user", query)]}
+        result = agent.invoke(inputs)
+        
+        logger.success("Phân tích sentiment tin tức thành công.")
+        
+        return result["messages"][-1].content
+        
+    except Exception as e:
+        
+        logger.error(f"Lỗi khi chạy Sentiment Agent: {str(e)}")
+        
+        return (
+            f"**Lưu ý về Tin tức:** Hệ thống thu thập tin tức và phân tích tâm lý thị trường "
+            f"hiện đang bị gián đoạn. Tạm thời không thể đánh giá tác động của truyền thông lên mã này.\n"
+            f"*(Chi tiết lỗi: {str(e)})*"
+        )
